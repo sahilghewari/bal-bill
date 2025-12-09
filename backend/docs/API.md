@@ -239,13 +239,33 @@ Optional query params: `start_date`, `end_date`, `billing_status`, `page`, `limi
 ### Generate Invoice
 **POST** `/billing/:customer_id/generate-invoice`
 
+Generate a customer invoice for a specified period. Usage data will be gathered from rated CDRs, and optional manual charges can be appended through `line_items` or `usage_charges`.
+
 ```json
 {
   "billing_period_start": "2025-12-01",
   "billing_period_end": "2025-12-31",
-  "due_date": "2026-01-07"
+  "due_date": "2026-01-07",
+  "usage_charges": 125.5,
+  "tax_rate": 18,
+  "discount_amount": 25,
+  "notes": "December usage true-up",
+  "auto_publish": true,
+  "line_items": [
+    {
+      "description": "Premium support",
+      "quantity": 1,
+      "unit_price": 99
+    }
+  ]
 }
 ```
+
+*Notes*
+- `usage_charges`, manual `line_items`, and rated CDR totals all contribute to the invoice subtotal.
+- `tax_rate` is applied to the subtotal (percentage) before subtracting `discount_amount`.
+- `auto_publish` skips the draft state and marks the invoice as `issued` after creation.
+- `line_items` entries without a description are ignored; quantities and unit prices default to `0` when invalid.
 
 ---
 
@@ -270,6 +290,36 @@ Returns invoice + line items.
   "payment_date": "2025-12-05"
 }
 ```
+
+---
+
+### Publish Invoice
+**POST** `/billing/invoice/:invoice_id/publish`
+
+Moves a draft invoice to `issued`.
+
+**Status Codes**
+- 200 Published
+- 400 Invalid state
+- 404 Invoice not found
+
+---
+
+### Cancel Invoice
+**POST** `/billing/invoice/:invoice_id/cancel`
+
+Cancels an unpaid invoice (`draft`, `issued`, or `overdue`). Optional body accepts a `reason`.
+
+```json
+{
+  "reason": "Customer requested cancellation"
+}
+```
+
+**Status Codes**
+- 200 Cancelled
+- 404 Invoice not found
+- 409 Invalid state transition
 
 ---
 

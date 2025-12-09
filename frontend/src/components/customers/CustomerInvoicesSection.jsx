@@ -1,6 +1,6 @@
 import React, { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Eye, Download } from 'lucide-react'
+import { Eye, Download, XCircle } from 'lucide-react'
 import { Button, Badge, DataTable, Skeleton } from '../common'
 import { usePaginatedApi } from '../../hooks/useApi'
 import billingService from '../../services/billingService'
@@ -19,6 +19,15 @@ const CustomerInvoicesSection = ({ customerId }) => {
       fetchData(1, 10)
     }
   }, [customerId, fetchData])
+
+  const cancelInvoice = async (invoiceId) => {
+    try {
+      await billingService.cancelInvoice(invoiceId, { reason: 'Cancelled from customer view' })
+      fetchData(1, 10)
+    } catch (error) {
+      console.error('Failed to cancel invoice', error)
+    }
+  }
 
   const columns = [
     { key: 'invoice_number', label: 'Invoice #' },
@@ -73,6 +82,15 @@ const CustomerInvoicesSection = ({ customerId }) => {
           >
             <Download size={18} />
           </button>
+          {['draft', 'issued', 'overdue'].includes(row.status) && (
+            <button
+              onClick={() => cancelInvoice(value)}
+              className="p-1 text-danger hover:bg-danger/10 rounded"
+              title="Cancel"
+            >
+              <XCircle size={18} />
+            </button>
+          )}
         </div>
       ),
     },

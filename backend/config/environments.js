@@ -31,7 +31,10 @@ const loadEnv = () => {
 
     // Database
     database: {
-      host: process.env.DB_HOST || 'localhost',
+      host: process.env.DB_HOST ||
+        (process.env.NODE_ENV === 'development' && process.env.USE_HOST_DOCKER_INTERNAL === 'true'
+          ? 'host.docker.internal'
+          : 'localhost'),
       port: parseInt(process.env.DB_PORT, 10) || 5432,
       name: process.env.DB_NAME || 'telecom_billing',
       user: process.env.DB_USER || 'postgres',

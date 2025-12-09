@@ -6,11 +6,36 @@ const CustomerBalance = require('../models/CustomerBalance');
 const RatingEngine = require('../utils/ratingEngine');
 const logger = require('../middleware/logger');
 
+const parseCancellationBody = (body) => {
+  if (!body || typeof body !== 'object') return {};
+  const reason = typeof body.reason === 'string' ? body.reason.trim() : null;
+  return { reason: reason || null };
+};
+
 // Generate invoice for customer
 exports.generateInvoice = async (req, res) => {
   try {
     const { customer_id } = req.params;
-    const { billing_period_start, billing_period_end, due_date } = req.body;
+    const {
+      billing_period_start,
+      billing_period_end,
+      due_date,
+      usage_charges = 0,
+      tax_rate = 0,
+      discount_amount = 0,
+      notes = null,
+      auto_publish = false,
+      line_items = [],
+    } = req.body;
+
+    const usageChargesValue = Number(usage_charges) || 0;
+    const taxRateValue = Number(tax_rate) || 0;
+    const discountAmountValue = Number(discount_amount) || 0;
+    const sanitizedNotes = typeof notes === 'string' ? notes.trim() : null;
+
+    if (!Array.isArray(line_items)) {
+      return res.status(400).json({ error: 'line_items must be an array' });
+    }
 
     const customer = await Customer.getById(customer_id);
     if (!customer) {
@@ -41,17 +66,30 @@ exports.generateInvoice = async (req, res) => {
 
     const cdrs = await CDR.getForInvoicePeriod(customer_id, startDate, endDate);
 
-    if (!cdrs.length) {
-      return res.status(400).json({ error: 'No billed CDRs found for this period' });
+    const manualLineItems = line_items
+      .filter((item) => item && typeof item === 'object')
+      .map((item) => ({
+        description: typeof item.description === 'string' ? item.description.trim() : '',
+        quantity: Number(item.quantity) || 0,
+        unit_price: Number(item.unit_price) || 0,
+      }))
+      .filter((item) => item.description);
+
+    if (!cdrs.length && !manualLineItems.length && usageChargesValue <= 0) {
+      return res.status(400).json({ error: 'No billable usage or manual line items provided' });
     }
 
-    let subtotal = 0;
+    let subtotal = usageChargesValue;
     cdrs.forEach((cdr) => {
       subtotal += parseFloat(cdr.billable_amount || 0);
     });
+    manualLineItems.forEach((item) => {
+      subtotal += item.quantity * item.unit_price;
+    });
 
-    const tax = 0;
-    const totalAmount = subtotal + tax;
+    const tax = subtotal > 0 ? subtotal * (taxRateValue / 100) : 0;
+    const totalBeforeDiscount = subtotal + tax;
+    const totalAmount = Math.max(totalBeforeDiscount - discountAmountValue, 0);
 
     const invoice = await Invoice.create({
       customer_id,
@@ -60,6 +98,8 @@ exports.generateInvoice = async (req, res) => {
       subtotal,
       tax,
       total_amount: totalAmount,
+      discount_amount: discountAmountValue,
+      notes: sanitizedNotes,
       due_date: dueDateValue,
     });
 
@@ -78,11 +118,30 @@ exports.generateInvoice = async (req, res) => {
       });
     }
 
+    for (const item of manualLineItems) {
+      const totalPrice = Number((item.quantity * item.unit_price).toFixed(4));
+
+      await InvoiceLineItem.create({
+        invoice_id: invoice.id,
+        cdr_id: null,
+        description: item.description,
+        quantity: Number(item.quantity.toFixed(4)),
+        unit_price: Number(item.unit_price.toFixed(6)),
+        total_price: totalPrice,
+      });
+    }
+
+    if (auto_publish && invoice.status === 'draft') {
+      const published = await Invoice.publish(invoice.id);
+      invoice.status = published?.status || invoice.status;
+    }
+
     logger.info('Invoice generated', {
       invoice_id: invoice.id,
       customer_id,
       total_amount: totalAmount,
       cdr_count: cdrs.length,
+      manual_items: manualLineItems.length,
     });
 
     res.status(201).json({
@@ -154,27 +213,45 @@ exports.getCustomerInvoices = async (req, res) => {
     const limit = parseInt(req.query.limit, 10) || 20;
     const { status } = req.query;
 
-    const customer = await Customer.getById(customer_id);
-    if (!customer) {
-      return res.status(404).json({ error: 'Customer not found' });
+    let customer = null;
+    if (customer_id) {
+      customer = await Customer.getById(customer_id);
+      if (!customer) {
+        return res.status(404).json({ error: 'Customer not found' });
+      }
+
+      const result = await Invoice.getByCustomer(customer_id, page, limit);
+      const invoices = status
+        ? result.invoices.filter((inv) => inv.status === status)
+        : result.invoices;
+
+      const total = status ? invoices.length : result.total;
+      const pages = Math.max(1, Math.ceil(total / result.limit));
+
+      return res.json({
+        success: true,
+        data: invoices,
+        pagination: {
+          page: result.page,
+          limit: result.limit,
+          total,
+          pages,
+        },
+      });
     }
 
-    const result = await Invoice.getByCustomer(customer_id, page, limit);
-    const invoices = status
-      ? result.invoices.filter((inv) => inv.status === status)
-      : result.invoices;
-
-    const total = status ? invoices.length : result.total;
-    const pages = Math.max(1, Math.ceil(total / result.limit));
+    const normalizedStatus = status ? String(status).trim().toLowerCase() : undefined;
+    const searchTerm = req.query.search ? String(req.query.search).trim() : '';
+    const result = await Invoice.getAll({ page, limit, status: normalizedStatus, search: searchTerm });
 
     res.json({
       success: true,
-      data: invoices,
+      data: result.invoices,
       pagination: {
         page: result.page,
         limit: result.limit,
-        total,
-        pages,
+        total: result.total,
+        pages: Math.max(1, Math.ceil(result.total / result.limit)),
       },
     });
   } catch (error) {
@@ -303,6 +380,52 @@ exports.publishInvoice = async (req, res) => {
     logger.error('Failed to publish invoice', { error: error.message });
     res.status(500).json({
       error: 'Failed to publish invoice',
+      details: error.message,
+    });
+  }
+};
+
+// Cancel invoice
+exports.cancelInvoice = async (req, res) => {
+  try {
+    const { invoice_id } = req.params;
+    const invoice = await Invoice.getById(invoice_id);
+
+    if (!invoice) {
+      return res.status(404).json({ error: 'Invoice not found' });
+    }
+
+    if (invoice.status === 'cancelled') {
+      return res.status(200).json({
+        success: true,
+        message: 'Invoice already cancelled',
+        data: invoice,
+      });
+    }
+
+    const { reason } = parseCancellationBody(req.body);
+    const cancelled = await Invoice.cancel(invoice_id, reason);
+
+    if (!cancelled) {
+      return res.status(409).json({
+        error: `Invoice cannot be cancelled from status ${invoice.status}`,
+      });
+    }
+
+    logger.info('Invoice cancelled', {
+      invoice_id,
+      reason,
+    });
+
+    res.json({
+      success: true,
+      message: 'Invoice cancelled successfully',
+      data: cancelled,
+    });
+  } catch (error) {
+    logger.error('Failed to cancel invoice', { error: error.message });
+    res.status(500).json({
+      error: 'Failed to cancel invoice',
       details: error.message,
     });
   }
@@ -482,6 +605,7 @@ exports.getBillingOverview = async (req, res) => {
 // Get invoices due for payment
 exports.getOverdueInvoices = async (req, res) => {
   try {
+    await Invoice.markOverduePastDueDate();
     const customersResult = await Customer.getAll(1, 10000);
     const customers = customersResult.customers;
     const overdueInvoices = [];

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, CreditCard, Download } from 'lucide-react'
+import { ArrowLeft, CreditCard, Download, XCircle } from 'lucide-react'
 import MainLayout from '../../components/layout/MainLayout'
 import Header from '../../components/layout/Header'
 import {
@@ -19,12 +19,13 @@ const InvoiceDetailPage = () => {
   const { invoiceId } = useParams()
   const navigate = useNavigate()
   const { addNotification } = useAppContext()
-  const { fetchInvoice, recordPayment } = useBillingContext()
+  const { fetchInvoice, recordPayment, cancelInvoice } = useBillingContext()
   const [invoice, setInvoice] = useState(null)
   const [lineItems, setLineItems] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [paymentModalOpen, setPaymentModalOpen] = useState(false)
+  const [cancelLoading, setCancelLoading] = useState(false)
 
   const loadInvoice = useCallback(async () => {
     try {
@@ -62,6 +63,29 @@ const InvoiceDetailPage = () => {
         message: err?.error || 'Unable to record payment',
       })
       throw err
+    }
+  }
+
+  const handleCancelInvoice = async () => {
+    if (!invoice) return
+
+    try {
+      setCancelLoading(true)
+      await cancelInvoice(invoice.id, { reason: 'Cancelled manually from UI' })
+      addNotification({
+        type: 'success',
+        title: 'Invoice cancelled',
+        message: 'Invoice status has been updated to cancelled.',
+      })
+      await loadInvoice()
+    } catch (err) {
+      addNotification({
+        type: 'error',
+        title: 'Cancellation failed',
+        message: err?.error || 'Unable to cancel invoice',
+      })
+    } finally {
+      setCancelLoading(false)
     }
   }
 
@@ -148,6 +172,7 @@ const InvoiceDetailPage = () => {
 
   const paymentHistory = invoice.payments || []
   const statusAllowsPayment = ['issued', 'overdue'].includes(invoice.status)
+  const allowCancellation = ['draft', 'issued', 'overdue'].includes(invoice.status)
   const currency = invoice.currency || 'USD'
 
   return (
@@ -167,6 +192,16 @@ const InvoiceDetailPage = () => {
             {statusAllowsPayment && (
               <Button icon={CreditCard} onClick={() => setPaymentModalOpen(true)}>
                 Record Payment
+              </Button>
+            )}
+            {allowCancellation && (
+              <Button
+                variant="outline"
+                icon={XCircle}
+                onClick={handleCancelInvoice}
+                loading={cancelLoading}
+              >
+                Cancel Invoice
               </Button>
             )}
           </div>

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Eye, Download, MoreVertical } from 'lucide-react'
+import { Eye, Download, XCircle } from 'lucide-react'
 import MainLayout from '../../components/layout/MainLayout'
 import Header from '../../components/layout/Header'
 import {
@@ -86,6 +86,24 @@ const InvoiceListPage = () => {
     }
   }
 
+  const cancelInvoice = async (invoiceId) => {
+    try {
+      await billingService.cancelInvoice(invoiceId, { reason: 'Cancelled from invoice list' })
+      addNotification({
+        type: 'success',
+        title: 'Invoice cancelled',
+        message: `Invoice ${invoiceId} marked as cancelled`,
+      })
+      fetchData(page, 20)
+    } catch (err) {
+      addNotification({
+        type: 'error',
+        title: 'Cancellation failed',
+        message: err?.error || 'Unable to cancel invoice',
+      })
+    }
+  }
+
   const columns = [
     {
       key: 'invoice_number',
@@ -154,13 +172,16 @@ const InvoiceListPage = () => {
           >
             <Download size={18} />
           </button>
-          <button
-            type="button"
-            className="p-1 text-gray-600 hover:bg-gray-100 rounded"
-            title="More actions"
-          >
-            <MoreVertical size={18} />
-          </button>
+          {['draft', 'issued', 'overdue'].includes(row.status) && (
+            <button
+              type="button"
+              onClick={() => cancelInvoice(value)}
+              className="p-1 text-danger hover:bg-danger/10 rounded"
+              title="Cancel Invoice"
+            >
+              <XCircle size={18} />
+            </button>
+          )}
         </div>
       ),
     },

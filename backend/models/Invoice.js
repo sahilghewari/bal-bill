@@ -11,6 +11,8 @@ class Invoice {
       subtotal,
       tax = 0,
       total_amount,
+      discount_amount = 0,
+      notes = null,
       due_date,
     } = data;
 
@@ -23,8 +25,8 @@ class Invoice {
     const query = `
       INSERT INTO invoices
       (id, customer_id, invoice_number, billing_period_start, billing_period_end,
-       subtotal, tax, total_amount, due_date, status)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       subtotal, tax, total_amount, discount_amount, notes, cancellation_reason, due_date, status, status_changed_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
       RETURNING *;
     `;
 
@@ -38,8 +40,12 @@ class Invoice {
         subtotal,
         tax,
         total_amount,
+        discount_amount,
+        notes,
+        null,
         due_date,
         'draft',
+        now,
       ]);
       logger.info('Invoice created', { invoice_id: id, customer_id, invoice_number: invoiceNumber });
       return result.rows[0];
@@ -150,6 +156,7 @@ class Invoice {
       UPDATE invoices
       SET amount_paid = $1,
           paid_date = $2,
+          status_changed_at = CASE WHEN status <> $3 THEN CURRENT_TIMESTAMP ELSE status_changed_at END,
           status = $3,
           updated_at = CURRENT_TIMESTAMP
       WHERE id = $4
@@ -188,8 +195,10 @@ class Invoice {
   static async publish(invoiceId) {
     const query = `
       UPDATE invoices
-      SET status = 'issued', updated_at = CURRENT_TIMESTAMP
-      WHERE id = $1
+      SET status = 'issued',
+          status_changed_at = CURRENT_TIMESTAMP,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = $1 AND status = 'draft'
       RETURNING *;
     `;
 
@@ -199,6 +208,56 @@ class Invoice {
       return result.rows[0];
     } catch (error) {
       logger.error('Failed to publish invoice', { invoice_id: invoiceId, error: error.message });
+      throw error;
+    }
+  }
+
+  static async cancel(invoiceId, reason = null) {
+    const validStatuses = ['draft', 'issued', 'overdue'];
+    const query = `
+      UPDATE invoices
+      SET status = 'cancelled',
+          cancellation_reason = $2,
+          status_changed_at = CURRENT_TIMESTAMP,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE id = $1 AND status = ANY($3)
+      RETURNING *;
+    `;
+
+    try {
+      const result = await pool.query(query, [invoiceId, reason, validStatuses]);
+      if (!result.rows[0]) {
+        logger.warn('Invoice cancellation skipped due to status mismatch', { invoice_id: invoiceId });
+      } else {
+        logger.info('Invoice cancelled', { invoice_id: invoiceId });
+      }
+      return result.rows[0] || null;
+    } catch (error) {
+      logger.error('Failed to cancel invoice', { invoice_id: invoiceId, error: error.message });
+      throw error;
+    }
+  }
+
+  static async markOverduePastDueDate(referenceDate = new Date()) {
+    const query = `
+      UPDATE invoices
+      SET status = 'overdue',
+          status_changed_at = CURRENT_TIMESTAMP,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE status = 'issued'
+        AND due_date < $1
+        AND COALESCE(amount_paid, 0) < total_amount
+      RETURNING *;
+    `;
+
+    try {
+      const result = await pool.query(query, [referenceDate]);
+      if (result.rows.length) {
+        logger.info('Invoices marked as overdue', { count: result.rows.length });
+      }
+      return result.rows;
+    } catch (error) {
+      logger.error('Failed to mark invoices overdue', { error: error.message });
       throw error;
     }
   }

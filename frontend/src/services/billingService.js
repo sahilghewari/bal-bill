@@ -67,6 +67,18 @@ const billingService = {
     }
   },
 
+  cancelInvoice: async (invoiceId, payload = {}) => {
+    try {
+      const response = await apiClient.post(
+        `/billing/invoice/${invoiceId}/cancel`,
+        payload
+      )
+      return response.data.data
+    } catch (error) {
+      throw error.response?.data || { error: 'Failed to cancel invoice' }
+    }
+  },
+
   getBillingDashboard: async (customerId, period = '30') => {
     try {
       const response = await apiClient.get(`/billing/${customerId}/dashboard`, {

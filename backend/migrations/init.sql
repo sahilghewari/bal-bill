@@ -99,13 +99,17 @@ CREATE TABLE invoices (
   subtotal DECIMAL(15, 4) NOT NULL,
   tax DECIMAL(15, 4) DEFAULT 0.00,
   total_amount DECIMAL(15, 4) NOT NULL,
+  discount_amount DECIMAL(15, 4) DEFAULT 0.00,
+  notes TEXT,
+  cancellation_reason TEXT,
   amount_paid DECIMAL(15, 4) DEFAULT 0.00,
   status VARCHAR(20) DEFAULT 'draft',
   due_date DATE NOT NULL,
   paid_date DATE,
   pdf_url VARCHAR(500),
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  status_changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE INDEX idx_invoices_customer ON invoices(customer_id);

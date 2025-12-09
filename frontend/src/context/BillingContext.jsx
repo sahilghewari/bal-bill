@@ -101,6 +101,22 @@ export const BillingProvider = ({ children }) => {
     }
   }, [])
 
+  const cancelInvoice = useCallback(async (invoiceId, payload) => {
+    try {
+      setBillingLoading(true)
+      setBillingError(null)
+      const cancelled = await billingService.cancelInvoice(invoiceId, payload)
+      setInvoices((prev) => prev.map((inv) => (inv.id === invoiceId ? cancelled : inv)))
+      setSelectedInvoice((prev) => (prev && prev.id === invoiceId ? cancelled : prev))
+      return cancelled
+    } catch (error) {
+      setBillingError(error?.error || 'Failed to cancel invoice')
+      throw error
+    } finally {
+      setBillingLoading(false)
+    }
+  }, [])
+
   const value = {
     invoices,
     selectedInvoice,
@@ -114,6 +130,7 @@ export const BillingProvider = ({ children }) => {
     createPaymentIntent,
     confirmPayment,
     recordPayment,
+    cancelInvoice,
   }
 
   return <BillingContext.Provider value={value}>{children}</BillingContext.Provider>

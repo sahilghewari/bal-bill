@@ -208,6 +208,16 @@ exports.sendInvoiceReminders = async () => {
   }
 };
 
+exports.markOverdueInvoices = async () => {
+  try {
+    logger.info('Starting overdue invoice check');
+    const marked = await Invoice.markOverduePastDueDate();
+    logger.info('Overdue invoice check complete', { marked: marked.length });
+  } catch (error) {
+    logger.error('Failed to mark overdue invoices', { error: error.message });
+  }
+};
+
 exports.healthCheck = async () => {
   try {
     const result = await pool.query('SELECT NOW()');

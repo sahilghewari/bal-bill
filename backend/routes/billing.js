@@ -12,6 +12,7 @@ router.get('/:customer_id/invoices', billingController.getCustomerInvoices);
 // Payment operations
 router.post('/invoice/:invoice_id/payment', billingController.recordPayment);
 router.post('/invoice/:invoice_id/publish', billingController.publishInvoice);
+router.post('/invoice/:invoice_id/cancel', billingController.cancelInvoice);
 
 // Dashboard & analytics
 router.get('/:customer_id/dashboard', billingController.getBillingDashboard);

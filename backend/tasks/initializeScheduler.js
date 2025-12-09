@@ -9,6 +9,7 @@ const initializeScheduler = () => {
     scheduleJob('generate-due-invoices', 'daily', billingTasks.generateDueInvoices);
     scheduleJob('check-low-balances', '360', billingTasks.checkLowBalances);
     scheduleJob('retry-failed-payments', '720', billingTasks.retryFailedPayments);
+    scheduleJob('mark-overdue-invoices', 'daily', billingTasks.markOverdueInvoices);
     scheduleJob('send-invoice-reminders', 'daily', billingTasks.sendInvoiceReminders);
     scheduleJob('health-check', '30', billingTasks.healthCheck);
     scheduleJob('cleanup-old-logs', 'weekly', billingTasks.cleanupOldLogs);
