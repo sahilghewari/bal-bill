@@ -1,0 +1,40 @@
+# Build stage
+FROM node:18-alpine AS builder
+
+WORKDIR /app
+
+COPY package*.json ./
+RUN npm ci --only=production
+
+# Production stage
+FROM node:18-alpine
+
+LABEL maintainer="your-email@example.com"
+LABEL description="Telecom Billing System Backend"
+LABEL version="1.0.0"
+
+WORKDIR /app
+
+RUN apk update \
+  && apk add --no-cache dumb-init curl \
+  && apk cache clean
+
+RUN addgroup -g 1001 -S nodejs \
+  && adduser -S nodejs -u 1001
+
+COPY --from=builder --chown=nodejs:nodejs /app/node_modules ./node_modules
+COPY --chown=nodejs:nodejs . .
+
+RUN mkdir -p logs && chown -R nodejs:nodejs logs
+
+ENV NODE_ENV=production
+
+USER nodejs
+
+EXPOSE 5000
+
+HEALTHCHECK --interval=30s --timeout=3s --start-period=40s --retries=3 \
+  CMD curl -f http://localhost:5000/health || exit 1
+
+ENTRYPOINT ["dumb-init", "--"]
+CMD ["node", "server.js"]

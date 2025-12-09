@@ -1,0 +1,371 @@
+# Telecom Billing System - API Documentation
+
+## Base URL
+`http://localhost:5000/api`
+
+## Authentication
+Currently not required (internal use only).
+
+---
+
+## Customers
+
+### Create Customer
+**POST** `/customers`
+
+Create a new customer account.
+
+**Request Body**
+```json
+{
+  "name": "TechCorp India",
+  "email": "billing@techcorp.in",
+  "phone": "+91-9876543210",
+  "country": "India",
+  "currency": "USD",
+  "billing_day": 1
+}
+```
+
+**Response**
+```json
+{
+  "success": true,
+  "message": "Customer created successfully",
+  "data": {
+    "id": "uuid",
+    "name": "TechCorp India",
+    "email": "billing@techcorp.in",
+    "current_balance": 0,
+    "status": "active",
+    "created_at": "2025-12-04T17:30:00Z"
+  }
+}
+```
+
+**Status Codes**
+- 201 Created
+- 400 Validation failed
+- 409 Email already exists
+
+---
+
+### Get All Customers
+**GET** `/customers?page=1&limit=20`
+
+Retrieve paginated list of all customers.
+
+**Response**
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": "uuid",
+      "name": "Customer Name",
+      "email": "email@example.com",
+      "country": "USA",
+      "currency": "USD",
+      "current_balance": 150.5,
+      "status": "active"
+    }
+  ],
+  "pagination": {
+    "page": 1,
+    "limit": 20,
+    "total": 50,
+    "pages": 3
+  }
+}
+```
+
+---
+
+### Get Customer by ID
+**GET** `/customers/:customer_id`
+
+Returns detailed customer info including rate cards and balance history.
+
+**Status Codes**
+- 200 OK
+- 404 Customer not found
+
+---
+
+### Update Customer
+**PUT** `/customers/:customer_id`
+
+Updates name, phone, billing day, or status.
+
+---
+
+### Add Credit to Customer
+**POST** `/customers/:customer_id/add-credit`
+
+**Request Body**
+```json
+{
+  "amount": 500,
+  "description": "Monthly prepaid recharge"
+}
+```
+
+**Response**
+```json
+{
+  "success": true,
+  "message": "Credit added successfully",
+  "data": {
+    "balance_before": 100,
+    "balance_after": 600,
+    "amount_added": 500
+  }
+}
+```
+
+---
+
+### Get Customer Balance
+**GET** `/customers/:customer_id/balance`
+
+Returns balance, status, and recommendation.
+
+---
+
+### Get Balance History
+**GET** `/customers/:customer_id/balance-history?page=1&limit=50`
+
+Returns paginated transaction list.
+
+---
+
+## Rate Cards
+
+### Create Rate Card
+**POST** `/rateCards`
+
+```json
+{
+  "customer_id": "uuid",
+  "service_type": "DID",
+  "initial_block_seconds": 60,
+  "next_block_seconds": 60,
+  "price_per_minute": 0.004,
+  "connection_fee_flat": 0,
+  "effective_date": "2025-12-01"
+}
+```
+
+Status codes: 201 Created, 400 Invalid configuration, 404 Customer not found.
+
+---
+
+### Get Customer Rate Cards
+**GET** `/rateCards/customer/:customer_id`
+
+Returns cards grouped by service type.
+
+---
+
+### Get Active Rate Card
+**GET** `/rateCards/customer/:customer_id/active?service_type=DID&call_date=2025-12-04`
+
+Requires `service_type` and `call_date` (YYYY-MM-DD).
+
+---
+
+### Simulate Billing
+**POST** `/rateCards/:customer_id/simulate`
+
+```json
+{
+  "duration_seconds": 65,
+  "service_type": "DID",
+  "call_date": "2025-12-04"
+}
+```
+
+Returns billable seconds/minutes and impact on balance.
+
+---
+
+## CDRs (Call Detail Records)
+
+### Import CDR
+**POST** `/cdrs/import`
+
+```json
+{
+  "customer_id": "uuid",
+  "caller_id": "+1-555-0001",
+  "callee_id": "+91-9876543210",
+  "destination": "Mumbai",
+  "start_time": "2025-12-04T10:00:00Z",
+  "end_time": "2025-12-04T10:02:05Z",
+  "duration_seconds": 125,
+  "service_type": "DID"
+}
+```
+
+---
+
+### Batch Import CDRs
+**POST** `/cdrs/import-batch`
+
+```json
+{
+  "cdrs": [{}, {}]
+}
+```
+
+---
+
+### Process CDR
+**POST** `/cdrs/process/:cdr_id`
+
+Returns billed charge and new balance.
+
+---
+
+### Get Customer CDRs
+**GET** `/cdrs/customer/:customer_id?start_date=2025-12-01&end_date=2025-12-31&billing_status=pending`
+
+Optional query params: `start_date`, `end_date`, `billing_status`, `page`, `limit`.
+
+---
+
+## Invoices
+
+### Generate Invoice
+**POST** `/billing/:customer_id/generate-invoice`
+
+```json
+{
+  "billing_period_start": "2025-12-01",
+  "billing_period_end": "2025-12-31",
+  "due_date": "2026-01-07"
+}
+```
+
+---
+
+### Get Invoice
+**GET** `/billing/invoice/:invoice_id`
+
+Returns invoice + line items.
+
+---
+
+### Get Customer Invoices
+**GET** `/billing/:customer_id/invoices?status=issued&page=1&limit=20`
+
+---
+
+### Record Payment
+**POST** `/billing/invoice/:invoice_id/payment`
+
+```json
+{
+  "paid_amount": 500.5,
+  "payment_date": "2025-12-05"
+}
+```
+
+---
+
+## Payments (Stripe)
+
+### Create Payment Intent
+**POST** `/stripe/invoice/:invoice_id/create-intent`
+
+```json
+{
+  "payment_method_id": "pm_card_visa"
+}
+```
+
+Returns client secret + payment intent data.
+
+### Confirm Payment
+**POST** `/stripe/intent/:payment_intent_id/confirm`
+
+Confirms payment using payment method.
+
+---
+
+## Admin Dashboard
+
+### Dashboard Overview
+**GET** `/admin/dashboard/overview?period=30`
+
+Returns KPIs for the requested period.
+
+### Revenue Report
+**GET** `/admin/analytics/revenue?period=90`
+
+### Payment Analytics
+**GET** `/admin/analytics/payments?period=30`
+
+### System Health
+**GET** `/admin/system/health`
+
+---
+
+## Error Responses
+```json
+{
+  "error": "Error message",
+  "error_id": "ERR_1701790200000_abc123def",
+  "details": "Stack trace (development only)"
+}
+```
+
+Common status codes: 200, 201, 400, 404, 409, 429, 500.
+
+---
+
+## Rate Limiting
+100 requests/hour/IP. Response headers: `X-RateLimit-Limit`, `X-RateLimit-Remaining`, `X-RateLimit-Reset`.
+
+---
+
+## Pagination
+Paginated endpoints accept `page` + `limit` and respond with:
+```json
+{
+  "pagination": {
+    "page": 1,
+    "limit": 20,
+    "total": 150,
+    "pages": 8
+  }
+}
+```
+
+---
+
+## Timestamps
+ISO 8601 UTC (e.g., `2025-12-04T17:30:00.000Z`).
+
+---
+
+## Currency Codes
+Supported currencies: `USD`, `CAD`, `PHP`.
+
+---
+
+## Status Codes
+- Customer: `active`, `inactive`, `suspended`
+- Invoice: `draft`, `issued`, `paid`, `overdue`, `cancelled`
+- CDR: `pending`, `billed`, `failed`
+
+---
+
+## Example Workflow
+1. POST `/api/customers`
+2. POST `/api/rateCards`
+3. POST `/api/cdrs/import`
+4. POST `/api/cdrs/process/:cdr_id`
+5. POST `/api/billing/:customer_id/generate-invoice`
+6. POST `/api/stripe/invoice/:invoice_id/create-intent`
+7. POST `/api/stripe/intent/:payment_intent_id/confirm`
