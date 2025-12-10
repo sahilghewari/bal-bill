@@ -1,6 +1,7 @@
 const { pool } = require('../config/database');
 const { v4: uuidv4 } = require('uuid');
 const logger = require('../middleware/logger');
+const InvoiceLineItem = require('./InvoiceLineItem');
 
 class Invoice {
   static async create(data) {
@@ -53,6 +54,143 @@ class Invoice {
       logger.error('Failed to create invoice', { error: error.message });
       throw error;
     }
+  }
+
+  static sanitizeLineItems(lineItems = []) {
+    return (Array.isArray(lineItems) ? lineItems : [])
+      .filter((item) => item && typeof item === 'object')
+      .map((item) => ({
+        description: typeof item.description === 'string' ? item.description.trim() : '',
+        quantity: Number(item.quantity) || 0,
+        unit_price: Number(item.unit_price) || 0,
+      }))
+      .filter((item) => item.description);
+  }
+
+  static prepareInvoicePayload({
+    customer,
+    invoiceRequest,
+    cdrs,
+    manualLineItems,
+    usageCharges,
+    billingPeriodStart,
+    billingPeriodEnd,
+    dueDate,
+  }) {
+    const sanitizedNotes = typeof invoiceRequest.notes === 'string' ? invoiceRequest.notes.trim() : null;
+    const usageChargeValue = Number(usageCharges) || 0;
+    const taxRateValue = Number(invoiceRequest.tax_rate) || 0;
+    const discountAmountValue = Number(invoiceRequest.discount_amount) || 0;
+    const autoPublish = Boolean(invoiceRequest.auto_publish);
+    const manualItems = this.sanitizeLineItems(manualLineItems);
+
+    let subtotal = usageChargeValue;
+    cdrs.forEach((cdr) => {
+      subtotal += parseFloat(cdr.billable_amount || 0);
+    });
+
+    manualItems.forEach((item) => {
+      subtotal += item.quantity * item.unit_price;
+    });
+
+    if (!cdrs.length && !manualItems.length && subtotal <= 0) {
+      return null;
+    }
+
+    const taxAmount = subtotal > 0 ? subtotal * (taxRateValue / 100) : 0;
+    const totalBeforeDiscount = subtotal + taxAmount;
+    const totalAmount = Math.max(totalBeforeDiscount - discountAmountValue, 0);
+
+    return {
+      customerId: customer.id,
+      billingPeriodStart,
+      billingPeriodEnd,
+      dueDate,
+      subtotal,
+      tax: Number(taxAmount.toFixed(4)),
+      totalAmount: Number(totalAmount.toFixed(4)),
+      discountAmount: Number(discountAmountValue.toFixed(4)),
+      notes: sanitizedNotes,
+      autoPublish,
+      cdrs,
+      manualItems,
+      usageCharges: usageChargeValue,
+      taxRate: taxRateValue,
+    };
+  }
+
+  static async createWithLineItems(payload) {
+    const {
+      customerId,
+      billingPeriodStart,
+      billingPeriodEnd,
+      dueDate,
+      subtotal,
+      tax,
+      totalAmount,
+      discountAmount,
+      notes,
+      autoPublish,
+      cdrs,
+      manualItems,
+      taxRate,
+      usageCharges,
+    } = payload;
+
+    const invoice = await this.create({
+      customer_id: customerId,
+      billing_period_start: billingPeriodStart,
+      billing_period_end: billingPeriodEnd,
+      subtotal,
+      tax,
+      total_amount: totalAmount,
+      discount_amount: discountAmount,
+      notes,
+      due_date: dueDate,
+    });
+
+    for (const cdr of cdrs) {
+      const minutes = cdr.billable_seconds ? cdr.billable_seconds / 60 : 0;
+      const totalPrice = parseFloat(cdr.billable_amount || 0);
+      const unitPrice = minutes > 0 ? totalPrice / minutes : totalPrice;
+
+      await InvoiceLineItem.create({
+        invoice_id: invoice.id,
+        cdr_id: cdr.id,
+        description: `Call from ${cdr.caller_id} to ${cdr.callee_id} (${cdr.duration_seconds}s)`,
+        quantity: Number(minutes.toFixed(4)),
+        unit_price: Number(unitPrice.toFixed(6)),
+        total_price: Number(totalPrice.toFixed(4)),
+      });
+    }
+
+    for (const item of manualItems) {
+      const totalPrice = Number((item.quantity * item.unit_price).toFixed(4));
+
+      await InvoiceLineItem.create({
+        invoice_id: invoice.id,
+        cdr_id: null,
+        description: item.description,
+        quantity: Number(item.quantity.toFixed(4)),
+        unit_price: Number(item.unit_price.toFixed(6)),
+        total_price: totalPrice,
+      });
+    }
+
+    let finalInvoice = invoice;
+    if (autoPublish && invoice.status === 'draft') {
+      const published = await this.publish(invoice.id);
+      if (published) {
+        finalInvoice = published;
+      }
+    }
+
+    return {
+      invoice: finalInvoice,
+      lineItems: cdrs.length + manualItems.length,
+      taxRate,
+      usageCharges,
+    };
   }
 
   static async getById(invoiceId) {

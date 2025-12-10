@@ -20,6 +20,7 @@ const rateCardSchema = Joi.object({
   price_per_minute: Joi.number().positive().precision(6).required(),
   connection_fee_flat: Joi.number().min(0).precision(4).default(0),
   effective_date: Joi.date().iso().required(),
+  currency: Joi.string().length(3).uppercase().optional(),
 }).messages(customMessages);
 
 // CDR validation

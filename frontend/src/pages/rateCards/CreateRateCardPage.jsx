@@ -21,10 +21,16 @@ const CreateRateCardPage = () => {
     try {
       setSubmitting(true)
       setSubmitError(null)
-      await rateCardService.createRateCard({
+      const payload = {
         ...values,
         customer_id: values.customer_id || customerId,
-      })
+      }
+
+      if (!payload.currency) {
+        delete payload.currency
+      }
+
+      await rateCardService.createRateCard(payload)
       addNotification({
         type: 'success',
         title: 'Success',

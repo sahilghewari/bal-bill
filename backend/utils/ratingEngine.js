@@ -74,6 +74,23 @@ class RatingEngine {
         throw new Error(`No active rate card found for customer ${cdr.customer_id} on ${callDate}`);
       }
 
+      if (!rateCard.currency) {
+        logger.warn('Rate card missing currency; defaulting to customer currency', {
+          customer_id: cdr.customer_id,
+          rate_card_id: rateCard.id,
+        });
+        rateCard.currency = customer.currency;
+      }
+
+      if (customer.currency && rateCard.currency && customer.currency !== rateCard.currency) {
+        logger.warn('Currency mismatch detected between customer and rate card', {
+          customer_id: cdr.customer_id,
+          customer_currency: customer.currency,
+          rate_card_currency: rateCard.currency,
+          rate_card_id: rateCard.id,
+        });
+      }
+
       const chargeDetails = this.calculateCharge(cdr.duration_seconds, rateCard);
       const totalCharge = chargeDetails.totalCharge;
 

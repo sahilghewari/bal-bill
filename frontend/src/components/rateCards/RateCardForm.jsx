@@ -30,6 +30,7 @@ const RateCardForm = ({
       price_per_minute: '',
       connection_fee_flat: 0,
       effective_date: new Date().toISOString().split('T')[0],
+      currency: initialData?.currency || '',
     },
     onSubmit,
     { enableReinitialize: true }
@@ -53,6 +54,16 @@ const RateCardForm = ({
     { value: 60, label: '60 seconds (1 minute)' },
   ]
 
+  const currencyOptions = [
+    { value: '', label: 'Use customer default' },
+    { value: 'USD', label: 'USD — US Dollar' },
+    { value: 'EUR', label: 'EUR — Euro' },
+    { value: 'GBP', label: 'GBP — British Pound' },
+    { value: 'INR', label: 'INR — Indian Rupee' },
+    { value: 'CAD', label: 'CAD — Canadian Dollar' },
+    { value: 'AUD', label: 'AUD — Australian Dollar' },
+  ]
+
   const initialBlock = Number(values.initial_block_seconds || 0)
   const nextBlock = Number(values.next_block_seconds || 0)
   const connectionFee = Number(values.connection_fee_flat || 0)
@@ -68,7 +79,7 @@ const RateCardForm = ({
         />
       )}
 
-      {/* Service Type & Effective Date */}
+      {/* Service Type, Currency & Effective Date */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <Select
           label="Service Type"
@@ -81,6 +92,18 @@ const RateCardForm = ({
           touched={touched.service_type}
           required
           disabled={!!initialData}
+        />
+
+        <Select
+          label="Currency"
+          name="currency"
+          options={currencyOptions}
+          value={values.currency}
+          onChange={handleChange}
+          onBlur={handleBlur}
+          error={errors.currency}
+          touched={touched.currency}
+          helperText="Leave blank to inherit the customer currency"
         />
 
         <Input

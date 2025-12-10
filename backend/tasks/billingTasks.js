@@ -27,34 +27,35 @@ exports.generateDueInvoices = async () => {
         const dueDate = new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000);
 
         const cdrs = await CDR.getForInvoicePeriod(customer.id, billingStart, billingEnd);
-        if (!cdrs.length) continue;
 
-        const subtotal = cdrs.reduce((sum, cdr) => sum + parseFloat(cdr.billable_amount || 0), 0);
-
-        const invoice = await Invoice.create({
-          customer_id: customer.id,
+        const invoiceRequest = {
           billing_period_start: billingStart,
           billing_period_end: billingEnd,
-          subtotal,
-          tax: 0,
-          total_amount: subtotal,
           due_date: dueDate,
+          usage_charges: 0,
+          tax_rate: customer.default_tax_rate || 0,
+          discount_amount: 0,
+          notes: 'Automated billing cycle invoice',
+          auto_publish: true,
+          line_items: [],
+        };
+
+        const invoicePayload = Invoice.prepareInvoicePayload({
+          customer,
+          invoiceRequest,
+          cdrs,
+          manualLineItems: invoiceRequest.line_items,
+          usageCharges: invoiceRequest.usage_charges,
+          billingPeriodStart: billingStart,
+          billingPeriodEnd: billingEnd,
+          dueDate,
         });
 
-        for (const cdr of cdrs) {
-          const minutes = cdr.billable_seconds ? cdr.billable_seconds / 60 : 0;
-          const totalPrice = parseFloat(cdr.billable_amount || 0);
-          const unitPrice = minutes ? totalPrice / minutes : totalPrice;
-
-          await InvoiceLineItem.create({
-            invoice_id: invoice.id,
-            cdr_id: cdr.id,
-            description: `Call from ${cdr.caller_id} to ${cdr.callee_id}`,
-            quantity: Number(minutes.toFixed(4)),
-            unit_price: Number(unitPrice.toFixed(6)),
-            total_price: Number(totalPrice.toFixed(4)),
-          });
+        if (!invoicePayload) {
+          continue;
         }
+
+        const { invoice } = await Invoice.createWithLineItems(invoicePayload);
 
         generatedCount += 1;
         logger.info('Invoice generated automatically', {

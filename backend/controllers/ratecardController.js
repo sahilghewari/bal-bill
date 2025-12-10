@@ -15,6 +15,7 @@ exports.createRateCard = async (req, res) => {
       price_per_minute,
       connection_fee_flat,
       effective_date,
+      currency,
     } = req.body;
 
     const { error } = validateRateCard(req.body);
@@ -44,6 +45,8 @@ exports.createRateCard = async (req, res) => {
       });
     }
 
+    const currencyCode = currency || customer.currency;
+
     const rateCard = await RateCard.create({
       customer_id,
       service_type,
@@ -52,6 +55,7 @@ exports.createRateCard = async (req, res) => {
       price_per_minute,
       connection_fee_flat: connection_fee_flat || 0,
       effective_date,
+      currency: currencyCode,
     });
 
     logger.info('Rate card created', {
@@ -188,6 +192,7 @@ exports.updateRateCard = async (req, res) => {
       price_per_minute,
       connection_fee_flat,
       status,
+      currency,
     } = req.body;
 
     const rateCard = await RateCard.getById(rate_card_id);
@@ -225,6 +230,7 @@ exports.updateRateCard = async (req, res) => {
       price_per_minute,
       connection_fee_flat,
       status,
+      currency,
     });
 
     logger.info('Rate card updated', {

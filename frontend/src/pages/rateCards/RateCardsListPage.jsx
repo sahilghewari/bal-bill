@@ -67,11 +67,17 @@ const RateCardsListPage = () => {
 
   const handleDuplicate = async (rateCard) => {
     try {
-      await rateCardService.createRateCard({
+      const payload = {
         ...rateCard,
         id: undefined,
         effective_date: new Date().toISOString().split('T')[0],
-      })
+      }
+
+      if (!payload.currency) {
+        delete payload.currency
+      }
+
+      await rateCardService.createRateCard(payload)
       addNotification({
         type: 'success',
         title: 'Success',

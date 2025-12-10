@@ -12,14 +12,15 @@ class RateCard {
       price_per_minute,
       connection_fee_flat = 0,
       effective_date,
+      currency,
     } = data;
 
     const id = uuidv4();
     const query = `
       INSERT INTO rate_cards
       (id, customer_id, service_type, initial_block_seconds, next_block_seconds,
-       price_per_minute, connection_fee_flat, effective_date, status)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       price_per_minute, connection_fee_flat, effective_date, status, currency)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
       RETURNING *;
     `;
 
@@ -34,6 +35,7 @@ class RateCard {
         connection_fee_flat,
         effective_date,
         'active',
+        currency,
       ]);
       logger.info('Rate card created', { rate_card_id: id, customer_id });
       return result.rows[0];
@@ -99,6 +101,7 @@ class RateCard {
       price_per_minute,
       connection_fee_flat,
       status,
+      currency,
     } = data;
 
     const query = `
@@ -108,8 +111,9 @@ class RateCard {
           price_per_minute = COALESCE($3, price_per_minute),
           connection_fee_flat = COALESCE($4, connection_fee_flat),
           status = COALESCE($5, status),
+          currency = COALESCE($6, currency),
           updated_at = CURRENT_TIMESTAMP
-      WHERE id = $6
+      WHERE id = $7
       RETURNING *;
     `;
 
@@ -120,6 +124,7 @@ class RateCard {
         price_per_minute,
         connection_fee_flat,
         status,
+        currency,
         rateCardId,
       ]);
       logger.info('Rate card updated', { rate_card_id: rateCardId });

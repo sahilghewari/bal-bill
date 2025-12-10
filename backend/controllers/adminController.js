@@ -35,8 +35,7 @@ const buildDashboardOverviewData = async (periodDays) => {
   const inactiveCustomers = customers.filter((c) => c.status === 'inactive').length;
   const totalBalance = customers.reduce((sum, c) => sum + parseFloat(c.current_balance || 0), 0);
 
-  let totalInvoiced = 0;
-  let totalPaid = 0;
+  const totalsByCurrency = {};
   let invoiceCount = 0;
   let totalCalls = 0;
   let totalDuration = 0;
@@ -50,8 +49,14 @@ const buildDashboardOverviewData = async (periodDays) => {
     });
 
     periodInvoices.forEach((inv) => {
-      totalInvoiced += parseFloat(inv.total_amount || 0);
-      totalPaid += parseFloat(inv.amount_paid || 0);
+      const currency = inv.currency || customer.currency || 'USD';
+      totalsByCurrency[currency] = totalsByCurrency[currency] || {
+        invoiced: 0,
+        paid: 0,
+      };
+
+      totalsByCurrency[currency].invoiced += parseFloat(inv.total_amount || 0);
+      totalsByCurrency[currency].paid += parseFloat(inv.amount_paid || 0);
       invoiceCount += 1;
     });
 
@@ -70,7 +75,22 @@ const buildDashboardOverviewData = async (periodDays) => {
     );
   }
 
-  const totalOutstanding = totalInvoiced - totalPaid;
+  const financialsByCurrency = Object.entries(totalsByCurrency).map(([currency, values]) => ({
+    currency,
+    total_invoiced: roundNumber(values.invoiced),
+    total_paid: roundNumber(values.paid),
+    outstanding: roundNumber(values.invoiced - values.paid),
+  }));
+
+  const aggregateFinancials = financialsByCurrency.reduce(
+    (acc, item) => {
+      acc.total_invoiced += item.total_invoiced;
+      acc.total_paid += item.total_paid;
+      acc.outstanding += item.outstanding;
+      return acc;
+    },
+    { total_invoiced: 0, total_paid: 0, outstanding: 0 }
+  );
 
   return {
     period: {
@@ -84,11 +104,12 @@ const buildDashboardOverviewData = async (periodDays) => {
       inactive: inactiveCustomers,
     },
     financials: {
-      total_invoiced: roundNumber(totalInvoiced),
-      total_paid: roundNumber(totalPaid),
-      outstanding: roundNumber(totalOutstanding),
+      total_invoiced: roundNumber(aggregateFinancials.total_invoiced),
+      total_paid: roundNumber(aggregateFinancials.total_paid),
+      outstanding: roundNumber(aggregateFinancials.outstanding),
       total_customer_balance: roundNumber(totalBalance),
       invoice_count: invoiceCount,
+      by_currency: financialsByCurrency,
     },
     usage: {
       total_calls: totalCalls,
@@ -162,6 +183,7 @@ const buildRevenueReportData = async (periodDays) => {
   let totalCalls = 0;
   const revenueByDay = {};
   const revenueByCustomer = [];
+  const revenueByCurrency = {};
 
   for (const customer of customers) {
     const invoicesResult = await Invoice.getByCustomer(customer.id, 1, 10000);
@@ -170,11 +192,18 @@ const buildRevenueReportData = async (periodDays) => {
       return createdAt >= startDate && createdAt <= endDate;
     });
 
-    const customerRevenue = periodInvoices.reduce(
-      (sum, inv) => sum + parseFloat(inv.total_amount || 0),
-      0
+    const customerRevenueBreakdown = periodInvoices.reduce(
+      (acc, inv) => {
+        const currency = inv.currency || customer.currency || 'USD';
+        const amount = parseFloat(inv.total_amount || 0);
+        acc.total += amount;
+        acc.byCurrency[currency] = (acc.byCurrency[currency] || 0) + amount;
+        revenueByCurrency[currency] = (revenueByCurrency[currency] || 0) + amount;
+        return acc;
+      },
+      { total: 0, byCurrency: {} }
     );
-    totalRevenue += customerRevenue;
+    totalRevenue += customerRevenueBreakdown.total;
 
     periodInvoices.forEach((inv) => {
       const day = new Date(inv.created_at).toISOString().split('T')[0];
@@ -190,12 +219,16 @@ const buildRevenueReportData = async (periodDays) => {
     const callCount = cdrsResult.cdrs.length;
     totalCalls += callCount;
 
-    if (customerRevenue > 0) {
+    if (customerRevenueBreakdown.total > 0) {
       revenueByCustomer.push({
         customer_id: customer.id,
         customer_name: customer.name,
         email: customer.email,
-        revenue: roundNumber(customerRevenue),
+        revenue: roundNumber(customerRevenueBreakdown.total),
+        revenue_by_currency: Object.entries(customerRevenueBreakdown.byCurrency).map(([currency, amount]) => ({
+          currency,
+          total: roundNumber(amount),
+        })),
         invoices: periodInvoices.length,
         calls: callCount,
       });
@@ -222,6 +255,10 @@ const buildRevenueReportData = async (periodDays) => {
       total_calls: totalCalls,
       average_revenue_per_call: roundNumber(totalRevenue / (totalCalls || 1)),
       average_revenue_per_day: roundNumber(totalRevenue / (periodDays || 1)),
+      by_currency: Object.entries(revenueByCurrency).map(([currency, amount]) => ({
+        currency,
+        total_revenue: roundNumber(amount),
+      })),
     },
     revenue_by_day: revenueByDayArray,
     top_customers: revenueByCustomer.slice(0, 10),

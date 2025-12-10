@@ -1,5 +1,4 @@
 const Invoice = require('../models/Invoice');
-const InvoiceLineItem = require('../models/InvoiceLineItem');
 const CDR = require('../models/CDR');
 const Customer = require('../models/Customer');
 const CustomerBalance = require('../models/CustomerBalance');
@@ -16,42 +15,23 @@ const parseCancellationBody = (body) => {
 exports.generateInvoice = async (req, res) => {
   try {
     const { customer_id } = req.params;
-    const {
-      billing_period_start,
-      billing_period_end,
-      due_date,
-      usage_charges = 0,
-      tax_rate = 0,
-      discount_amount = 0,
-      notes = null,
-      auto_publish = false,
-      line_items = [],
-    } = req.body;
-
-    const usageChargesValue = Number(usage_charges) || 0;
-    const taxRateValue = Number(tax_rate) || 0;
-    const discountAmountValue = Number(discount_amount) || 0;
-    const sanitizedNotes = typeof notes === 'string' ? notes.trim() : null;
-
-    if (!Array.isArray(line_items)) {
-      return res.status(400).json({ error: 'line_items must be an array' });
-    }
+    const invoiceRequest = req.body || {};
 
     const customer = await Customer.getById(customer_id);
     if (!customer) {
       return res.status(404).json({ error: 'Customer not found' });
     }
 
-    if (!billing_period_start || !billing_period_end) {
+    if (!invoiceRequest.billing_period_start || !invoiceRequest.billing_period_end) {
       return res.status(400).json({
         error: 'billing_period_start and billing_period_end are required',
       });
     }
 
-    const startDate = new Date(billing_period_start);
-    const endDate = new Date(billing_period_end);
-    const dueDateValue = due_date
-      ? new Date(due_date)
+    const startDate = new Date(invoiceRequest.billing_period_start);
+    const endDate = new Date(invoiceRequest.billing_period_end);
+    const dueDateValue = invoiceRequest.due_date
+      ? new Date(invoiceRequest.due_date)
       : new Date(endDate.getTime() + 7 * 24 * 60 * 60 * 1000);
 
     if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
@@ -66,82 +46,32 @@ exports.generateInvoice = async (req, res) => {
 
     const cdrs = await CDR.getForInvoicePeriod(customer_id, startDate, endDate);
 
-    const manualLineItems = line_items
-      .filter((item) => item && typeof item === 'object')
-      .map((item) => ({
-        description: typeof item.description === 'string' ? item.description.trim() : '',
-        quantity: Number(item.quantity) || 0,
-        unit_price: Number(item.unit_price) || 0,
-      }))
-      .filter((item) => item.description);
+    const invoicePayload = Invoice.prepareInvoicePayload({
+      customer,
+      invoiceRequest,
+      cdrs,
+      manualLineItems: invoiceRequest.line_items,
+      usageCharges: invoiceRequest.usage_charges,
+      billingPeriodStart: startDate,
+      billingPeriodEnd: endDate,
+      dueDate: dueDateValue,
+    });
 
-    if (!cdrs.length && !manualLineItems.length && usageChargesValue <= 0) {
+    if (!invoicePayload) {
       return res.status(400).json({ error: 'No billable usage or manual line items provided' });
     }
 
-    let subtotal = usageChargesValue;
-    cdrs.forEach((cdr) => {
-      subtotal += parseFloat(cdr.billable_amount || 0);
-    });
-    manualLineItems.forEach((item) => {
-      subtotal += item.quantity * item.unit_price;
-    });
-
-    const tax = subtotal > 0 ? subtotal * (taxRateValue / 100) : 0;
-    const totalBeforeDiscount = subtotal + tax;
-    const totalAmount = Math.max(totalBeforeDiscount - discountAmountValue, 0);
-
-    const invoice = await Invoice.create({
-      customer_id,
-      billing_period_start: startDate,
-      billing_period_end: endDate,
-      subtotal,
-      tax,
-      total_amount: totalAmount,
-      discount_amount: discountAmountValue,
-      notes: sanitizedNotes,
-      due_date: dueDateValue,
-    });
-
-    for (const cdr of cdrs) {
-      const minutes = cdr.billable_seconds ? cdr.billable_seconds / 60 : 0;
-      const totalPrice = parseFloat(cdr.billable_amount || 0);
-      const unitPrice = minutes > 0 ? totalPrice / minutes : totalPrice;
-
-      await InvoiceLineItem.create({
-        invoice_id: invoice.id,
-        cdr_id: cdr.id,
-        description: `Call from ${cdr.caller_id} to ${cdr.callee_id} (${cdr.duration_seconds}s)`,
-        quantity: Number(minutes.toFixed(4)),
-        unit_price: Number(unitPrice.toFixed(6)),
-        total_price: Number(totalPrice.toFixed(4)),
-      });
-    }
-
-    for (const item of manualLineItems) {
-      const totalPrice = Number((item.quantity * item.unit_price).toFixed(4));
-
-      await InvoiceLineItem.create({
-        invoice_id: invoice.id,
-        cdr_id: null,
-        description: item.description,
-        quantity: Number(item.quantity.toFixed(4)),
-        unit_price: Number(item.unit_price.toFixed(6)),
-        total_price: totalPrice,
-      });
-    }
-
-    if (auto_publish && invoice.status === 'draft') {
-      const published = await Invoice.publish(invoice.id);
-      invoice.status = published?.status || invoice.status;
-    }
+    const { invoice, lineItems, taxRate, usageCharges } = await Invoice.createWithLineItems(invoicePayload);
 
     logger.info('Invoice generated', {
       invoice_id: invoice.id,
       customer_id,
-      total_amount: totalAmount,
+      total_amount: invoice.total_amount,
       cdr_count: cdrs.length,
-      manual_items: manualLineItems.length,
+      manual_items: invoicePayload.manualItems.length,
+      auto_publish: invoicePayload.autoPublish,
+      tax_rate: taxRate,
+      usage_charges: usageCharges,
     });
 
     res.status(201).json({
@@ -149,7 +79,7 @@ exports.generateInvoice = async (req, res) => {
       message: 'Invoice generated successfully',
       data: {
         invoice,
-        line_items_count: cdrs.length,
+        line_items_count: lineItems,
       },
     });
   } catch (error) {

@@ -5,10 +5,115 @@ const Customer = require('../models/Customer');
 const CustomerBalance = require('../models/CustomerBalance');
 const logger = require('../middleware/logger');
 
+const getIdempotencyKey = (req, fallback) => {
+  const headerKey = req.headers['idempotency-key'];
+  if (headerKey && typeof headerKey === 'string' && headerKey.trim()) {
+    return headerKey.trim();
+  }
+  return fallback;
+};
+
+const ensureStripeCustomer = async (customer) => {
+  if (customer.stripe_customer_id) {
+    return customer.stripe_customer_id;
+  }
+
+  try {
+    const existing = await stripe.customers.list({ email: customer.email, limit: 1 });
+    if (existing.data.length) {
+      await Customer.update(customer.id, { stripe_customer_id: existing.data[0].id });
+      return existing.data[0].id;
+    }
+  } catch (lookupError) {
+    logger.warn('Failed to search existing Stripe customers by email', {
+      customer_id: customer.id,
+      error: lookupError.message,
+    });
+  }
+
+  const stripeCustomer = await stripe.customers.create(
+    {
+      email: customer.email,
+      name: customer.name,
+      metadata: { customer_id: customer.id },
+    },
+    {
+      idempotencyKey: `customer_${customer.id}`,
+    }
+  );
+
+  await Customer.update(customer.id, { stripe_customer_id: stripeCustomer.id });
+  return stripeCustomer.id;
+};
+
+const tryAttachPaymentMethod = async (stripeCustomerId, paymentMethodId, customerId) => {
+  if (!paymentMethodId) {
+    return null;
+  }
+
+  try {
+    const paymentMethod = await stripe.paymentMethods.attach(paymentMethodId, {
+      customer: stripeCustomerId,
+    });
+
+    logger.info('Stripe payment method attached to customer', {
+      customer_id: customerId,
+      stripe_customer_id: stripeCustomerId,
+      payment_method: paymentMethodId,
+    });
+
+    return paymentMethod;
+  } catch (attachError) {
+    logger.error('Failed to attach payment method to customer', {
+      customer_id: customerId,
+      stripe_customer_id: stripeCustomerId,
+      payment_method: paymentMethodId,
+      error: attachError.message,
+    });
+    throw attachError;
+  }
+};
+
+const getDefaultPaymentMethod = (customer) => {
+  if (customer.stripe_default_payment_method && customer.stripe_default_payment_method.trim()) {
+    return customer.stripe_default_payment_method.trim();
+  }
+
+  return null;
+};
+
+const buildPaymentIntentParams = ({
+  amountInCents,
+  currency,
+  stripeCustomerId,
+  paymentMethodId,
+  invoice,
+}) => {
+  const params = {
+    amount: amountInCents,
+    currency,
+    customer: stripeCustomerId,
+    metadata: {
+      invoice_id: invoice.id,
+      customer_id: invoice.customer_id,
+      invoice_number: invoice.invoice_number,
+    },
+    description: `Invoice ${invoice.invoice_number}`,
+  };
+
+  if (paymentMethodId) {
+    params.payment_method = paymentMethodId;
+    params.confirm = true;
+    params.off_session = true;
+  }
+
+  return params;
+};
+
 exports.createPaymentIntent = async (req, res) => {
   try {
     const { invoice_id } = req.params;
-    const { payment_method_id } = req.body;
+    const { payment_method_id } = req.body || {};
 
     const invoice = await Invoice.getById(invoice_id);
     if (!invoice) {
@@ -21,39 +126,36 @@ exports.createPaymentIntent = async (req, res) => {
     }
 
     const amountInCents = Math.round(parseFloat(invoice.total_amount) * 100);
+    const stripeCustomerId = await ensureStripeCustomer(customer);
 
-    let stripeCustomerId;
-    try {
-      const stripeCustomer = await stripe.customers.create({
-        email: customer.email,
-        name: customer.name,
-        metadata: { customer_id: invoice.customer_id },
-      });
-      stripeCustomerId = stripeCustomer.id;
-    } catch (error) {
-      logger.error('Failed to create Stripe customer', { error: error.message });
-      return res.status(500).json({
-        error: 'Failed to create Stripe customer',
-        details: error.message,
-      });
+    const incomingPaymentMethodId = typeof payment_method_id === 'string' ? payment_method_id.trim() : null;
+    const fallbackPaymentMethodId = getDefaultPaymentMethod(customer);
+
+    let resolvedPaymentMethodId = incomingPaymentMethodId || fallbackPaymentMethodId;
+
+    if (incomingPaymentMethodId) {
+      await tryAttachPaymentMethod(stripeCustomerId, incomingPaymentMethodId, customer.id);
+      resolvedPaymentMethodId = incomingPaymentMethodId;
     }
+
+    const params = buildPaymentIntentParams({
+      amountInCents,
+      currency: customer.currency.toLowerCase(),
+      stripeCustomerId,
+      paymentMethodId: resolvedPaymentMethodId,
+      invoice,
+    });
 
     let paymentIntent;
     try {
-      paymentIntent = await stripe.paymentIntents.create({
-        amount: amountInCents,
-        currency: customer.currency.toLowerCase(),
-        customer: stripeCustomerId,
-        payment_method: payment_method_id || undefined,
-        confirm: Boolean(payment_method_id),
-        metadata: {
-          invoice_id,
-          customer_id: invoice.customer_id,
-          invoice_number: invoice.invoice_number,
-        },
-      });
+      const idempotencyKey = getIdempotencyKey(req, `pi_${invoice.id}`);
+      paymentIntent = await stripe.paymentIntents.create(params, { idempotencyKey });
     } catch (error) {
-      logger.error('Failed to create payment intent', { error: error.message });
+      logger.error('Failed to create payment intent', {
+        invoice_id,
+        customer_id: invoice.customer_id,
+        error: error.message,
+      });
       return res.status(400).json({
         error: 'Failed to create payment intent',
         details: error.message,
@@ -67,8 +169,13 @@ exports.createPaymentIntent = async (req, res) => {
       amount: parseFloat(invoice.total_amount),
       currency: customer.currency,
       status: paymentIntent.status,
-      payment_method: payment_method_id || null,
+      payment_method: resolvedPaymentMethodId,
+      stripe_customer_id: stripeCustomerId,
     });
+
+    if (resolvedPaymentMethodId && resolvedPaymentMethodId !== customer.stripe_default_payment_method) {
+      await Customer.update(customer.id, { stripe_default_payment_method: resolvedPaymentMethodId });
+    }
 
     logger.info('Stripe payment intent created', {
       payment_intent_id: paymentIntent.id,
@@ -90,38 +197,43 @@ exports.createPaymentIntent = async (req, res) => {
     });
   } catch (error) {
     logger.error('Unexpected error creating payment intent', { error: error.message });
-    res.status(500).json({
-      error: 'Failed to create payment intent',
-      details: error.message,
-    });
+    res.status(500).json({ error: 'Failed to create payment intent', details: error.message });
   }
 };
 
 exports.confirmPaymentIntent = async (req, res) => {
   try {
     const { payment_intent_id } = req.params;
-    const { payment_method_id } = req.body;
-
-    if (!payment_method_id) {
-      return res.status(400).json({ error: 'payment_method_id is required' });
-    }
+    const { payment_method_id } = req.body || {};
 
     let paymentIntent;
     try {
-      paymentIntent = await stripe.paymentIntents.confirm(payment_intent_id, {
-        payment_method: payment_method_id,
+      const confirmParams = {};
+      if (payment_method_id) {
+        confirmParams.payment_method = payment_method_id;
+      }
+
+      const idempotencyKey = getIdempotencyKey(req, `pi_confirm_${payment_intent_id}`);
+      paymentIntent = await stripe.paymentIntents.confirm(payment_intent_id, confirmParams, {
+        idempotencyKey,
       });
     } catch (error) {
-      logger.error('Failed to confirm payment intent', { error: error.message });
-      return res.status(400).json({
-        error: 'Failed to confirm payment',
-        details: error.message,
+      logger.error('Failed to confirm payment intent', {
+        payment_intent_id,
+        error: error.message,
       });
+      return res.status(400).json({ error: 'Failed to confirm payment', details: error.message });
     }
 
     const transaction = await StripeTransaction.getByPaymentIntentId(payment_intent_id);
     if (!transaction) {
       return res.status(404).json({ error: 'Transaction not found' });
+    }
+
+    if (payment_method_id) {
+      await Customer.update(transaction.customer_id, {
+        stripe_default_payment_method: payment_method_id,
+      });
     }
 
     await StripeTransaction.updateStatus(transaction.id, paymentIntent.status);
@@ -142,10 +254,7 @@ exports.confirmPaymentIntent = async (req, res) => {
     });
   } catch (error) {
     logger.error('Unexpected error confirming payment intent', { error: error.message });
-    res.status(500).json({
-      error: 'Failed to confirm payment',
-      details: error.message,
-    });
+    res.status(500).json({ error: 'Failed to confirm payment', details: error.message });
   }
 };
 
@@ -164,15 +273,13 @@ exports.getPaymentIntentStatus = async (req, res) => {
         currency: paymentIntent.currency.toUpperCase(),
         customer_id: transaction?.customer_id || null,
         invoice_id: transaction?.invoice_id || null,
+        stripe_customer_id: transaction?.stripe_customer_id || null,
         created_at: new Date(paymentIntent.created * 1000),
       },
     });
   } catch (error) {
     logger.error('Failed to retrieve payment intent status', { error: error.message });
-    res.status(500).json({
-      error: 'Failed to get payment intent status',
-      details: error.message,
-    });
+    res.status(500).json({ error: 'Failed to get payment intent status', details: error.message });
   }
 };
 
@@ -185,32 +292,24 @@ exports.getPaymentMethods = async (req, res) => {
       return res.status(404).json({ error: 'Customer not found' });
     }
 
-    const latestTransaction = await StripeTransaction.getByCustomer(customer_id, 1, 1);
-    if (!latestTransaction.transactions.length) {
-      return res.json({
-        success: true,
-        data: {
-          customer_id,
-          payment_methods: [],
-          message: 'No payment methods found',
-        },
-      });
-    }
+    const stripeCustomerId = await ensureStripeCustomer(customer);
+    const paymentMethods = await stripe.paymentMethods.list({
+      customer: stripeCustomerId,
+      type: 'card',
+    });
 
     res.json({
       success: true,
       data: {
         customer_id,
-        payment_methods: [],
-        message: 'Payment methods list coming soon',
+        stripe_customer_id: stripeCustomerId,
+        default_payment_method: customer.stripe_default_payment_method || null,
+        payment_methods: paymentMethods.data,
       },
     });
   } catch (error) {
     logger.error('Failed to fetch payment methods', { error: error.message });
-    res.status(500).json({
-      error: 'Failed to get payment methods',
-      details: error.message,
-    });
+    res.status(500).json({ error: 'Failed to get payment methods', details: error.message });
   }
 };
 
@@ -305,7 +404,36 @@ exports.retryFailedPayments = async (req, res) => {
 
         if (paymentIntent.status === 'requires_payment_method') {
           try {
-            const retried = await stripe.paymentIntents.confirm(paymentIntent.id);
+            const customer = await Customer.getById(transaction.customer_id);
+            if (!customer) {
+              throw new Error('Customer not found for transaction');
+            }
+
+            const stripeCustomerId = await ensureStripeCustomer(customer);
+            const paymentMethodId = getDefaultPaymentMethod(customer);
+
+            if (!paymentMethodId) {
+              failed += 1;
+              logger.warn('No default payment method found for retry', {
+                transaction_id: transaction.id,
+                customer_id: transaction.customer_id,
+              });
+              const nextRetryTime = new Date(Date.now() + 24 * 60 * 60 * 1000);
+              await StripeTransaction.setRetry(
+                transaction.id,
+                (transaction.retry_count || 0) + 1,
+                nextRetryTime
+              );
+              continue;
+            }
+
+            await tryAttachPaymentMethod(stripeCustomerId, paymentMethodId, customer.id);
+
+            const retried = await stripe.paymentIntents.confirm(paymentIntent.id, {
+              payment_method: paymentMethodId,
+              off_session: true,
+            });
+
             if (retried.status === 'succeeded') {
               succeeded += 1;
               await StripeTransaction.updateStatus(transaction.id, 'succeeded');
