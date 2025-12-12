@@ -1,9 +1,23 @@
-const stripe = require('../config/stripe');
+const getStripeClient = require('../config/stripe');
 const Invoice = require('../models/Invoice');
 const StripeTransaction = require('../models/StripeTransaction');
 const Customer = require('../models/Customer');
 const CustomerBalance = require('../models/CustomerBalance');
 const logger = require('../middleware/logger');
+
+const FALLBACK_RETRY_DELAY_HOURS = 24;
+const MAX_RETRY_ATTEMPTS = 3;
+
+const PAYMENT_INTENT_TERMINAL_STATES = new Set(['succeeded', 'canceled']);
+const PAYMENT_INTENT_ACTIONABLE_STATES = new Set([
+  'requires_payment_method',
+  'requires_confirmation',
+  'requires_action',
+  'processing',
+]);
+
+const handledEvents = new Set();
+const getWebhookEventKey = (event) => `${event.id}-${event.type}`;
 
 const getIdempotencyKey = (req, fallback) => {
   const headerKey = req.headers['idempotency-key'];
@@ -19,6 +33,11 @@ const ensureStripeCustomer = async (customer) => {
   }
 
   try {
+    const stripe = getStripeClient();
+    if (!stripe) {
+      throw new Error('Stripe not configured');
+    }
+
     const existing = await stripe.customers.list({ email: customer.email, limit: 1 });
     if (existing.data.length) {
       await Customer.update(customer.id, { stripe_customer_id: existing.data[0].id });
@@ -29,6 +48,11 @@ const ensureStripeCustomer = async (customer) => {
       customer_id: customer.id,
       error: lookupError.message,
     });
+  }
+
+  const stripe = getStripeClient();
+  if (!stripe) {
+    throw new Error('Stripe not configured');
   }
 
   const stripeCustomer = await stripe.customers.create(
@@ -48,6 +72,11 @@ const ensureStripeCustomer = async (customer) => {
 
 const tryAttachPaymentMethod = async (stripeCustomerId, paymentMethodId, customerId) => {
   if (!paymentMethodId) {
+    return null;
+  }
+
+  const stripe = getStripeClient();
+  if (!stripe) {
     return null;
   }
 
@@ -77,6 +106,68 @@ const tryAttachPaymentMethod = async (stripeCustomerId, paymentMethodId, custome
 const getDefaultPaymentMethod = (customer) => {
   if (customer.stripe_default_payment_method && customer.stripe_default_payment_method.trim()) {
     return customer.stripe_default_payment_method.trim();
+  }
+
+  return null;
+};
+
+const scheduleRetry = async (transaction, delayHours, status = 'requires_payment_method', reason = null) => {
+  const nextRetryTime = new Date(Date.now() + delayHours * 60 * 60 * 1000);
+  await StripeTransaction.setRetry(
+    transaction.id,
+    (transaction.retry_count || 0) + 1,
+    nextRetryTime
+  );
+
+  if (status) {
+    await StripeTransaction.updateStatus(transaction.id, status, reason || transaction.error_message);
+  }
+};
+
+const resolveDefaultPaymentMethod = async (customer, stripeCustomerId) => {
+  const storedMethod = getDefaultPaymentMethod(customer);
+  if (storedMethod) {
+    return storedMethod;
+  }
+
+  if (!stripeCustomerId) {
+    return null;
+  }
+
+  try {
+    const stripe = getStripeClient();
+    if (!stripe) {
+      return null;
+    }
+
+    const stripeCustomer = await stripe.customers.retrieve(stripeCustomerId, {
+      expand: ['invoice_settings.default_payment_method'],
+    });
+
+    const defaultPaymentMethod =
+      stripeCustomer.invoice_settings?.default_payment_method
+      || stripeCustomer.default_payment_method
+      || stripeCustomer.invoice_settings?.default_payment_method?.id
+      || stripeCustomer.default_payment_method?.id;
+
+    if (defaultPaymentMethod) {
+      const paymentMethodId =
+        typeof defaultPaymentMethod === 'string'
+          ? defaultPaymentMethod
+          : defaultPaymentMethod.id;
+
+      await Customer.update(customer.id, {
+        stripe_default_payment_method: paymentMethodId,
+      });
+
+      return paymentMethodId;
+    }
+  } catch (lookupError) {
+    logger.warn('Failed to retrieve Stripe customer default payment method', {
+      customer_id: customer.id,
+      stripe_customer_id: stripeCustomerId,
+      error: lookupError.message,
+    });
   }
 
   return null;
@@ -112,6 +203,11 @@ const buildPaymentIntentParams = ({
 
 exports.createPaymentIntent = async (req, res) => {
   try {
+    const stripe = getStripeClient();
+    if (!stripe) {
+      return res.status(503).json({ error: 'Stripe integration not configured' });
+    }
+
     const { invoice_id } = req.params;
     const { payment_method_id } = req.body || {};
 
@@ -129,7 +225,7 @@ exports.createPaymentIntent = async (req, res) => {
     const stripeCustomerId = await ensureStripeCustomer(customer);
 
     const incomingPaymentMethodId = typeof payment_method_id === 'string' ? payment_method_id.trim() : null;
-    const fallbackPaymentMethodId = getDefaultPaymentMethod(customer);
+    const fallbackPaymentMethodId = await resolveDefaultPaymentMethod(customer, stripeCustomerId);
 
     let resolvedPaymentMethodId = incomingPaymentMethodId || fallbackPaymentMethodId;
 
@@ -203,6 +299,11 @@ exports.createPaymentIntent = async (req, res) => {
 
 exports.confirmPaymentIntent = async (req, res) => {
   try {
+    const stripe = getStripeClient();
+    if (!stripe) {
+      return res.status(503).json({ error: 'Stripe integration not configured' });
+    }
+
     const { payment_intent_id } = req.params;
     const { payment_method_id } = req.body || {};
 
@@ -260,6 +361,11 @@ exports.confirmPaymentIntent = async (req, res) => {
 
 exports.getPaymentIntentStatus = async (req, res) => {
   try {
+    const stripe = getStripeClient();
+    if (!stripe) {
+      return res.status(503).json({ error: 'Stripe integration not configured' });
+    }
+
     const { payment_intent_id } = req.params;
     const paymentIntent = await stripe.paymentIntents.retrieve(payment_intent_id);
     const transaction = await StripeTransaction.getByPaymentIntentId(payment_intent_id);
@@ -285,6 +391,11 @@ exports.getPaymentIntentStatus = async (req, res) => {
 
 exports.getPaymentMethods = async (req, res) => {
   try {
+    const stripe = getStripeClient();
+    if (!stripe) {
+      return res.status(503).json({ error: 'Stripe integration not configured' });
+    }
+
     const { customer_id } = req.params;
     const customer = await Customer.getById(customer_id);
 
@@ -315,6 +426,11 @@ exports.getPaymentMethods = async (req, res) => {
 
 exports.getTransactionHistory = async (req, res) => {
   try {
+    const stripe = getStripeClient();
+    if (!stripe) {
+      return res.status(503).json({ error: 'Stripe integration not configured' });
+    }
+
     const { customer_id } = req.params;
     const page = parseInt(req.query.page, 10) || 1;
     const limit = parseInt(req.query.limit, 10) || 20;
@@ -346,6 +462,11 @@ exports.getTransactionHistory = async (req, res) => {
 };
 
 exports.handleWebhook = async (req, res) => {
+  const stripe = getStripeClient();
+  if (!stripe) {
+    return res.status(503).json({ error: 'Stripe integration not configured' });
+  }
+
   const signature = req.headers['stripe-signature'];
   let event;
 
@@ -361,6 +482,12 @@ exports.handleWebhook = async (req, res) => {
   }
 
   try {
+    const eventKey = getWebhookEventKey(event);
+    if (handledEvents.has(eventKey)) {
+      logger.warn('Duplicate Stripe webhook ignored', { event_id: event.id, event_type: event.type });
+      return res.json({ received: true, duplicate: true });
+    }
+
     switch (event.type) {
       case 'payment_intent.succeeded':
         await handlePaymentSucceeded(event.data.object);
@@ -378,6 +505,7 @@ exports.handleWebhook = async (req, res) => {
         logger.info(`Unhandled Stripe event: ${event.type}`);
     }
 
+    handledEvents.add(eventKey);
     res.json({ received: true });
   } catch (error) {
     logger.error('Stripe webhook processing failed', { error: error.message });
@@ -387,6 +515,11 @@ exports.handleWebhook = async (req, res) => {
 
 exports.retryFailedPayments = async (req, res) => {
   try {
+    const stripe = getStripeClient();
+    if (!stripe) {
+      return res.status(503).json({ error: 'Stripe integration not configured' });
+    }
+
     const failedTransactions = await StripeTransaction.getFailedForRetry();
 
     if (!failedTransactions.length) {
@@ -402,6 +535,21 @@ exports.retryFailedPayments = async (req, res) => {
           transaction.stripe_payment_intent_id
         );
 
+        if (
+          PAYMENT_INTENT_TERMINAL_STATES.has(paymentIntent.status)
+          || transaction.retry_count >= MAX_RETRY_ATTEMPTS
+        ) {
+          if (paymentIntent.status === 'succeeded') {
+            succeeded += 1;
+            await StripeTransaction.updateStatus(transaction.id, 'succeeded');
+            await finalizeSuccessfulPayment(transaction);
+          } else {
+            failed += 1;
+            await StripeTransaction.updateStatus(transaction.id, paymentIntent.status);
+          }
+          continue;
+        }
+
         if (paymentIntent.status === 'requires_payment_method') {
           try {
             const customer = await Customer.getById(transaction.customer_id);
@@ -410,7 +558,7 @@ exports.retryFailedPayments = async (req, res) => {
             }
 
             const stripeCustomerId = await ensureStripeCustomer(customer);
-            const paymentMethodId = getDefaultPaymentMethod(customer);
+            const paymentMethodId = await resolveDefaultPaymentMethod(customer, stripeCustomerId);
 
             if (!paymentMethodId) {
               failed += 1;
@@ -418,11 +566,11 @@ exports.retryFailedPayments = async (req, res) => {
                 transaction_id: transaction.id,
                 customer_id: transaction.customer_id,
               });
-              const nextRetryTime = new Date(Date.now() + 24 * 60 * 60 * 1000);
-              await StripeTransaction.setRetry(
-                transaction.id,
-                (transaction.retry_count || 0) + 1,
-                nextRetryTime
+              await scheduleRetry(
+                transaction,
+                FALLBACK_RETRY_DELAY_HOURS,
+                'requires_payment_method',
+                'No default payment method available'
               );
               continue;
             }
@@ -432,6 +580,8 @@ exports.retryFailedPayments = async (req, res) => {
             const retried = await stripe.paymentIntents.confirm(paymentIntent.id, {
               payment_method: paymentMethodId,
               off_session: true,
+            }, {
+              idempotencyKey: `pi_retry_${paymentIntent.id}`,
             });
 
             if (retried.status === 'succeeded') {
@@ -440,11 +590,11 @@ exports.retryFailedPayments = async (req, res) => {
               await finalizeSuccessfulPayment(transaction);
             } else {
               failed += 1;
-              const nextRetryTime = new Date(Date.now() + 48 * 60 * 60 * 1000);
-              await StripeTransaction.setRetry(
-                transaction.id,
-                (transaction.retry_count || 0) + 1,
-                nextRetryTime
+              await scheduleRetry(
+                transaction,
+                FALLBACK_RETRY_DELAY_HOURS * 2,
+                retried.status,
+                'Retry did not succeed'
               );
             }
           } catch (retryError) {
@@ -453,6 +603,12 @@ exports.retryFailedPayments = async (req, res) => {
               transaction_id: transaction.id,
               error: retryError.message,
             });
+            await scheduleRetry(
+              transaction,
+              FALLBACK_RETRY_DELAY_HOURS,
+              transaction.status,
+              retryError.message
+            );
           }
         }
       } catch (retrieveError) {
@@ -540,9 +696,12 @@ async function handlePaymentFailed(paymentIntent) {
     paymentIntent.last_payment_error?.message || 'Payment failed - unknown reason';
 
   await StripeTransaction.updateStatus(transaction.id, 'failed', errorMessage);
-
-  const nextRetryTime = new Date(Date.now() + 24 * 60 * 60 * 1000);
-  await StripeTransaction.setRetry(transaction.id, (transaction.retry_count || 0) + 1, nextRetryTime);
+  await scheduleRetry(
+    transaction,
+    FALLBACK_RETRY_DELAY_HOURS,
+    'requires_payment_method',
+    errorMessage
+  );
 
   logger.warn('Stripe payment failed', {
     payment_intent_id: paymentIntent.id,
@@ -574,3 +733,8 @@ async function handleChargeRefunded(charge) {
     amount_refunded: charge.amount_refunded,
   });
 }
+
+exports.__test__ = {
+  scheduleRetry,
+  resolveDefaultPaymentMethod,
+};

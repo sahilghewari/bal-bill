@@ -6,6 +6,10 @@ import { Card, Skeleton, Alert } from '../../components/common'
 import { useAppContext } from '../../hooks/useAppContext'
 import ReportExporter from '../../components/analytics/ReportExporter'
 import StatCard from '../../components/dashboard/StatCard'
+import QueueHealthCard from '../../components/admin/QueueHealthCard'
+import useQueueHealth from '../../hooks/useQueueHealth'
+import NotificationFeedCard from '../../components/admin/NotificationFeedCard'
+import useNotificationFeed from '../../hooks/useNotificationFeed'
 
 /**
  * Admin Dashboard Page
@@ -21,6 +25,9 @@ const AdminDashboardPage = () => {
   useEffect(() => {
     fetchDashboardData()
   }, [fetchDashboardData])
+
+  const queueHealth = useQueueHealth()
+  const notificationFeed = useNotificationFeed({ pollInterval: 60000 })
 
   const formatCurrency = (value) => new Intl.NumberFormat('en-US', {
     style: 'currency',
@@ -114,23 +121,22 @@ const AdminDashboardPage = () => {
             </div>
           )}
         </Card>
+        <QueueHealthCard
+          queue_available={queueHealth.queue_available}
+          queues={queueHealth.queues}
+          loading={queueHealth.loading}
+          error={queueHealth.error}
+          onRefresh={queueHealth.refresh}
+        />
+      </div>
 
-        {/* Recent Alerts */}
-        <Card>
-          <h3 className="text-lg font-semibold mb-4">Recent Alerts</h3>
-          {dashboardLoading ? (
-            <Skeleton height="h-32" />
-          ) : (
-            <div className="space-y-3">
-              <Alert
-                type="warning"
-                title="Overdue Invoices"
-                message={`${overdueCount} invoices overdue`}
-                dismissible={false}
-              />
-            </div>
-          )}
-        </Card>
+      <div className="mt-6">
+        <NotificationFeedCard
+          events={notificationFeed.events}
+          loading={notificationFeed.loading}
+          error={notificationFeed.error}
+          onRefresh={notificationFeed.refresh}
+        />
       </div>
     </MainLayout>
   )

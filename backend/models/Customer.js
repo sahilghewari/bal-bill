@@ -8,8 +8,8 @@ class Customer {
     const id = uuidv4();
     const query = `
       INSERT INTO customers
-      (id, name, email, phone, country, currency, billing_day, status)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      (id, name, email, phone, country, currency, billing_day, status, stripe_customer_id, stripe_default_payment_method)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
       RETURNING *;
     `;
 
@@ -23,6 +23,8 @@ class Customer {
         currency,
         billing_day,
         'active',
+        null,
+        null,
       ]);
       logger.info('Customer created', { customer_id: id });
       return result.rows[0];
@@ -79,7 +81,15 @@ class Customer {
   }
 
   static async update(customerId, data) {
-    const { name, phone, status, billing_day, currency } = data;
+    const {
+      name,
+      phone,
+      status,
+      billing_day,
+      currency,
+      stripe_customer_id,
+      stripe_default_payment_method,
+    } = data;
     const query = `
       UPDATE customers
       SET name = COALESCE($1, name),
@@ -87,8 +97,10 @@ class Customer {
           status = COALESCE($3, status),
           billing_day = COALESCE($4, billing_day),
           currency = COALESCE($5, currency),
+          stripe_customer_id = COALESCE($6, stripe_customer_id),
+          stripe_default_payment_method = COALESCE($7, stripe_default_payment_method),
           updated_at = CURRENT_TIMESTAMP
-      WHERE id = $6
+      WHERE id = $8
       RETURNING *;
     `;
 
@@ -99,6 +111,8 @@ class Customer {
         status,
         billing_day,
         currency,
+        stripe_customer_id,
+        stripe_default_payment_method,
         customerId,
       ]);
       logger.info('Customer updated', { customer_id: customerId });

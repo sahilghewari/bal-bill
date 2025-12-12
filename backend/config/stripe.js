@@ -1,10 +1,19 @@
 const logger = require('../middleware/logger');
 
-if (!process.env.STRIPE_SECRET_KEY) {
-  logger.error('STRIPE_SECRET_KEY is not configured');
-  throw new Error('STRIPE_SECRET_KEY environment variable is required');
-}
+let stripeClient = null;
 
-const stripe = require('stripe')(process.env.STRIPE_SECRET_KEY);
+const getStripeClient = () => {
+  if (stripeClient) {
+    return stripeClient;
+  }
 
-module.exports = stripe;
+  if (!process.env.STRIPE_SECRET_KEY) {
+    logger.warn('STRIPE_SECRET_KEY not set – Stripe features disabled');
+    return null;
+  }
+
+  stripeClient = require('stripe')(process.env.STRIPE_SECRET_KEY);
+  return stripeClient;
+};
+
+module.exports = getStripeClient;

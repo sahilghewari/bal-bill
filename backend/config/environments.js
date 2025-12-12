@@ -24,6 +24,23 @@ const loadEnv = () => {
     .map((origin) => origin.trim())
     .filter(Boolean);
 
+  const normalizeDbPassword = (value) => {
+    if (value === undefined || value === null) {
+      return undefined;
+    }
+
+    if (typeof value === 'string') {
+      return value;
+    }
+
+    if (typeof value === 'number' || typeof value === 'boolean') {
+      logger.warn('Coercing DB_PASSWORD value to string');
+      return String(value);
+    }
+
+    throw new Error('DB_PASSWORD must be a string value');
+  };
+
   const env = {
     // Server
     port: process.env.PORT || 5000,
@@ -38,7 +55,7 @@ const loadEnv = () => {
       port: parseInt(process.env.DB_PORT, 10) || 5432,
       name: process.env.DB_NAME || 'telecom_billing',
       user: process.env.DB_USER || 'postgres',
-      password: process.env.DB_PASSWORD,
+      password: normalizeDbPassword(process.env.DB_PASSWORD),
       max: parseInt(process.env.DB_POOL_MAX, 10) || 20,
       idleTimeoutMillis: parseInt(process.env.DB_IDLE_TIMEOUT, 10) || 30000,
       connectionTimeoutMillis: parseInt(process.env.DB_CONNECTION_TIMEOUT, 10) || 2000,
@@ -49,6 +66,12 @@ const loadEnv = () => {
       secretKey: process.env.STRIPE_SECRET_KEY,
       publishableKey: process.env.STRIPE_PUBLISHABLE_KEY,
       webhookSecret: process.env.STRIPE_WEBHOOK_SECRET,
+    },
+
+    // Queue / Scheduler
+    queue: {
+      redisUrl: process.env.REDIS_URL || 'redis://127.0.0.1:6379',
+      enabled: process.env.ENABLE_QUEUE !== 'false',
     },
 
     // CORS

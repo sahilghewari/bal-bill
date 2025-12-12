@@ -1,9 +1,11 @@
 const Invoice = require('../models/Invoice');
+const InvoiceLineItem = require('../models/InvoiceLineItem');
 const CDR = require('../models/CDR');
 const Customer = require('../models/Customer');
 const CustomerBalance = require('../models/CustomerBalance');
 const RatingEngine = require('../utils/ratingEngine');
 const logger = require('../middleware/logger');
+const invoicePreviewService = require('../services/invoicePreviewService');
 
 const parseCancellationBody = (body) => {
   if (!body || typeof body !== 'object') return {};
@@ -22,6 +24,24 @@ exports.generateInvoice = async (req, res) => {
       return res.status(404).json({ error: 'Customer not found' });
     }
 
+    // Ensure any pending CDRs are rated before collecting usage so invoices
+    // include the latest charges instead of returning "no billable usage".
+    const includeUnbilled = invoiceRequest.include_unbilled !== false;
+    if (includeUnbilled) {
+      try {
+        await RatingEngine.processCustomerCDRs(customer_id);
+      } catch (processError) {
+        logger.error('Failed to process pending CDRs before invoice generation', {
+          customer_id,
+          error: processError.message,
+        });
+        return res.status(500).json({
+          error: 'Unable to process pending usage before generating the invoice',
+          details: processError.message,
+        });
+      }
+    }
+
     if (!invoiceRequest.billing_period_start || !invoiceRequest.billing_period_end) {
       return res.status(400).json({
         error: 'billing_period_start and billing_period_end are required',
@@ -30,6 +50,12 @@ exports.generateInvoice = async (req, res) => {
 
     const startDate = new Date(invoiceRequest.billing_period_start);
     const endDate = new Date(invoiceRequest.billing_period_end);
+
+    // Treat billing_period_end as inclusive (cover entire day) so late-day
+    // calls are captured instead of being dropped at 00:00 boundary.
+    if (!Number.isNaN(endDate.getTime())) {
+      endDate.setHours(23, 59, 59, 999);
+    }
     const dueDateValue = invoiceRequest.due_date
       ? new Date(invoiceRequest.due_date)
       : new Date(endDate.getTime() + 7 * 24 * 60 * 60 * 1000);
@@ -86,6 +112,42 @@ exports.generateInvoice = async (req, res) => {
     logger.error('Failed to generate invoice', { error: error.message });
     res.status(500).json({
       error: 'Failed to generate invoice',
+      details: error.message,
+    });
+  }
+};
+
+exports.getInvoicePreview = async (req, res) => {
+  try {
+    const { customer_id } = req.params;
+    const { billing_period_start: start, billing_period_end: end } = req.query;
+
+    if (!customer_id || !start || !end) {
+      return res.status(400).json({
+        error: 'customer_id, billing_period_start, and billing_period_end are required',
+      });
+    }
+
+    const startDate = new Date(start);
+    const endDate = new Date(end);
+
+    if (Number.isNaN(startDate.getTime()) || Number.isNaN(endDate.getTime())) {
+      return res.status(400).json({ error: 'Invalid billing period dates' });
+    }
+
+    endDate.setHours(23, 59, 59, 999);
+
+    const preview = await invoicePreviewService.getUsagePreview({
+      customerId: customer_id,
+      startDate,
+      endDate,
+    });
+
+    res.json({ success: true, data: preview });
+  } catch (error) {
+    logger.error('Failed to fetch invoice preview', { error: error.message });
+    res.status(500).json({
+      error: 'Failed to fetch invoice preview',
       details: error.message,
     });
   }

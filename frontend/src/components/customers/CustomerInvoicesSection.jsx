@@ -67,7 +67,7 @@ const CustomerInvoicesSection = ({ customerId }) => {
     {
       key: 'id',
       label: 'Actions',
-      render: (value) => (
+      render: (value, row) => (
         <div className="flex gap-2">
           <button
             onClick={() => navigate(`/invoices/${value}`)}

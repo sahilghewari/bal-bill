@@ -89,6 +89,17 @@ const billingService = {
       throw error.response?.data || { error: 'Failed to fetch billing dashboard' }
     }
   },
+
+  getInvoicePreview: async (customerId, params) => {
+    try {
+      const response = await apiClient.get(`/billing/${customerId}/preview`, {
+        params,
+      })
+      return response.data.data
+    } catch (error) {
+      throw error.response?.data || { error: 'Failed to fetch invoice preview' }
+    }
+  },
 }
 
 export default billingService

@@ -154,7 +154,7 @@ const InvoiceListPage = () => {
     {
       key: 'id',
       label: 'Actions',
-      render: (value) => (
+      render: (value, row) => (
         <div className="flex gap-2">
           <button
             type="button"

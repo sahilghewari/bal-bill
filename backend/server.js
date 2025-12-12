@@ -109,7 +109,9 @@ app.use(notFoundHandler);
 app.use(errorHandler);
 
 const startServer = () => {
-  const server = app.listen(config.port, () => {
+  const listenHost = process.env.HOST || '0.0.0.0';
+
+  const server = app.listen(config.port, listenHost, () => {
     logger.info(`🚀 Server running on port ${config.port}`);
     logger.info(`Environment: ${config.nodeEnv}`);
     logger.info(
@@ -141,7 +143,9 @@ const startServer = () => {
       }
 
       logger.info('Application shutdown complete');
-      process.exit(0);
+      if (!process.env.DISABLE_AUTO_EXIT) {
+        process.exit(0);
+      }
     });
 
     // Force shutdown after 30 seconds

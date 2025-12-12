@@ -152,7 +152,8 @@ Returns paginated transaction list.
   "next_block_seconds": 60,
   "price_per_minute": 0.004,
   "connection_fee_flat": 0,
-  "effective_date": "2025-12-01"
+  "effective_date": "2025-12-01",
+  "currency": "USD"
 }
 ```
 
@@ -265,6 +266,8 @@ Generate a customer invoice for a specified period. Usage data will be gathered 
 - `usage_charges`, manual `line_items`, and rated CDR totals all contribute to the invoice subtotal.
 - `tax_rate` is applied to the subtotal (percentage) before subtracting `discount_amount`.
 - `auto_publish` skips the draft state and marks the invoice as `issued` after creation.
+- Overdue invoices auto-cancel after 30 days past due unless payment is received.
+- When omitted, rate cards inherit the customer's currency; sending a 3-letter currency override stores it per card.
 - `line_items` entries without a description are ignored; quantities and unit prices default to `0` when invalid.
 
 ---
@@ -336,10 +339,39 @@ Cancels an unpaid invoice (`draft`, `issued`, or `overdue`). Optional body accep
 
 Returns client secret + payment intent data.
 
+- Reuses the Stripe customer associated with the telecom customer or creates one if absent.
+- Automatically attaches and persists new payment methods when provided.
+- Applies deterministic idempotency keys (`pi_{invoice_id}`) unless a custom `Idempotency-Key` header is supplied.
+
 ### Confirm Payment
 **POST** `/stripe/intent/:payment_intent_id/confirm`
 
 Confirms payment using payment method.
+
+- Uses idempotency key `pi_confirm_{payment_intent_id}` unless overridden via header.
+- Updates the customer's default payment method when a new `payment_method_id` is passed.
+
+### Retry Logic & Status Introspection
+- Failed intents retained in `requires_payment_method` state are retried up to three times via scheduler (`/scheduler/queues/billing/jobs/retry-failed-payments`).
+- Retry delays are ~24h, doubling on subsequent failures; results are stored in `stripe_transactions.retry_count` + `next_retry_at`.
+- Helper `/stripe/transactions/:customer_id` exposes status/error metadata for auditing.
+
+### Consuming Stripe Webhooks
+- Webhook idempotency is enforced via in-memory event keys (`event.id-event.type`).
+- On `payment_intent.succeeded`, invoices are marked paid and customer balances credited.
+- On `payment_intent.payment_failed`, retry scheduling is kicked off with captured error message.
+- Keep `STRIPE_WEBHOOK_SECRET` configured in `.env` or these events will be rejected (400).
+
+## Notifications
+
+Scheduler tasks emit events through the notification service. Configure transports via environment variables (Console included by default, Email via `SMTP_*`, Slack via `SLACK_WEBHOOK_URL`).
+
+Events:
+- `customer.balance.low`
+- `customer.balance.critical`
+- `invoice.reminder`
+- `invoice.overdue`
+- `invoice.cancelled.auto`
 
 ---
 
@@ -419,3 +451,50 @@ Supported currencies: `USD`, `CAD`, `PHP`.
 5. POST `/api/billing/:customer_id/generate-invoice`
 6. POST `/api/stripe/invoice/:invoice_id/create-intent`
 7. POST `/api/stripe/intent/:payment_intent_id/confirm`
+
+## Scheduler
+
+### Get Scheduler Status
+**GET** `/scheduler/status`
+
+Returns queue health and job metadata driven by Bull.
+
+### List Queues
+**GET** `/scheduler/queues`
+
+Returns each queue with counts and repeatable job schedules.
+
+### Queue Health Overview
+**GET** `/scheduler/queues/health`
+
+Returns a diagnostic snapshot containing:
+- Whether Bull/Redis is available (`queue_available`).
+- Per-queue job counts, paused state, and Redis client status (`connected` / `error`).
+- Repeatable job schedule metadata with next run timestamps.
+
+Use this endpoint for readiness probes or Grafana/Loki checks. A `200` response indicates the route executed even if queues are degraded; inspect the payload for warnings.
+
+### Trigger Job Now
+**POST** `/scheduler/queues/:queue_key/jobs/:job_name`
+
+Enqueues a single run of a repeatable job (e.g., `billing` + `process-pending-cdrs`).
+
+### Pause Queue
+**POST** `/scheduler/queues/:queue_key/pause`
+
+Stops the queue from processing until resumed.
+
+### Resume Queue
+**POST** `/scheduler/queues/:queue_key/resume`
+
+Restarts consumption for the queue.
+
+### Clean Queue History
+**POST** `/scheduler/queues/:queue_key/clean`
+
+Removes completed/failed jobs older than `grace_hours` (default 24).
+
+### Retry Failed Jobs
+**POST** `/scheduler/queues/:queue_key/retry-failed`
+
+Retries all failed jobs currently in the queue.

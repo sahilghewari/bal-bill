@@ -1,4 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ArrowLeft, Plus, Trash2 } from 'lucide-react'
 import MainLayout from '../../components/layout/MainLayout'
@@ -13,6 +19,7 @@ import {
 import { useAppContext, useBillingContext } from '../../hooks/useAppContext'
 import { useForm } from '../../hooks/useApi'
 import customerService from '../../services/customerService'
+import billingService from '../../services/billingService'
 
 const createLineItem = () => ({
   id: `item-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
@@ -40,6 +47,20 @@ const formatCurrency = (value, currency = 'USD') => {
   }).format(Number(value))
 }
 
+const formatDuration = (totalSeconds) => {
+  if (!Number.isFinite(totalSeconds) || totalSeconds <= 0) return '—'
+  const hours = Math.floor(totalSeconds / 3600)
+  const minutes = Math.floor((totalSeconds % 3600) / 60)
+  const seconds = Math.floor(totalSeconds % 60)
+
+  const parts = []
+  if (hours) parts.push(`${hours}h`)
+  if (minutes) parts.push(`${minutes}m`)
+  if (!hours && !minutes) parts.push(`${seconds}s`)
+
+  return parts.join(' ')
+}
+
 const GenerateInvoicePage = () => {
   const navigate = useNavigate()
   const { addNotification } = useAppContext()
@@ -48,6 +69,10 @@ const GenerateInvoicePage = () => {
   const [customersLoading, setCustomersLoading] = useState(false)
   const [customersError, setCustomersError] = useState(null)
   const [lineItems, setLineItems] = useState([createLineItem()])
+  const [usagePreview, setUsagePreview] = useState({ usageCharges: 0, cdrCount: 0, totalSeconds: 0 })
+  const [previewLoading, setPreviewLoading] = useState(false)
+  const [previewError, setPreviewError] = useState(null)
+  const usageOverrideRef = useRef(false)
 
   const today = new Date()
   const defaultIssueDate = formatDate(today)
@@ -141,13 +166,64 @@ const GenerateInvoicePage = () => {
 
   const formatValue = useCallback((amount) => formatCurrency(amount, values.currency || 'USD'), [values.currency])
 
+  useEffect(() => {
+    let active = true
+
+    if (!values.customer_id || !values.billing_period_start || !values.billing_period_end) {
+      setUsagePreview({ usageCharges: 0, cdrCount: 0, totalSeconds: 0 })
+      setPreviewError(null)
+      return () => {
+        active = false
+      }
+    }
+
+    setPreviewLoading(true)
+    setPreviewError(null)
+
+    billingService
+      .getInvoicePreview(values.customer_id, {
+        billing_period_start: values.billing_period_start,
+        billing_period_end: values.billing_period_end,
+      })
+      .then((data) => {
+        if (!active) return
+
+        const usageCharges = Number(data?.usage_charges ?? data?.usageCharges ?? 0)
+        const cdrCount = Number(data?.cdr_count ?? data?.cdrCount ?? 0)
+        const totalSeconds = Number(data?.total_seconds ?? data?.totalSeconds ?? 0)
+
+        setUsagePreview({ usageCharges, cdrCount, totalSeconds })
+
+        if (!usageOverrideRef.current && values.usage_charges !== '') {
+          usageOverrideRef.current = false
+          setFieldValue('usage_charges', '')
+        }
+      })
+      .catch((err) => {
+        if (!active) return
+        setUsagePreview({ usageCharges: 0, cdrCount: 0, totalSeconds: 0 })
+        setPreviewError(err?.error || err?.message || 'Failed to fetch usage preview')
+      })
+      .finally(() => {
+        if (!active) return
+        setPreviewLoading(false)
+      })
+
+    return () => {
+      active = false
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [values.customer_id, values.billing_period_start, values.billing_period_end, setFieldValue])
+
   const invoicePreview = useMemo(() => {
     const lineItemsTotal = lineItems.reduce((sum, item) => {
       const qty = Number(item.quantity) || 0
       const price = Number(item.unit_price) || 0
       return sum + qty * price
     }, 0)
-    const usageCharges = Number(values.usage_charges) || 0
+    const usageCharges = values.usage_charges === ''
+      ? usagePreview.usageCharges
+      : Number(values.usage_charges) || usagePreview.usageCharges
     const subtotal = lineItemsTotal + usageCharges
     const taxRate = Number(values.tax_rate) || 0
     const taxAmount = subtotal * (taxRate / 100)
@@ -162,7 +238,12 @@ const GenerateInvoicePage = () => {
       discount,
       total,
     }
-  }, [lineItems, values.usage_charges, values.tax_rate, values.discount_amount])
+  }, [lineItems, values.usage_charges, values.tax_rate, values.discount_amount, usagePreview])
+
+  const handleUsageChange = (event) => {
+    usageOverrideRef.current = event.target.value !== ''
+    handleChange(event)
+  }
 
   const handleLineItemChange = (id, field, value) => {
     setLineItems((prev) => prev.map((item) => (item.id === id ? { ...item, [field]: value } : item)))
@@ -179,6 +260,7 @@ const GenerateInvoicePage = () => {
   const submitting = billingLoading || formSubmitting
   const handleReset = useCallback(() => {
     setLineItems([createLineItem()])
+    usageOverrideRef.current = false
     setFieldValue('usage_charges', '')
     setFieldValue('discount_amount', '0')
     setFieldValue('tax_rate', '0')
@@ -290,7 +372,7 @@ const GenerateInvoicePage = () => {
                   type="number"
                   name="usage_charges"
                   value={values.usage_charges}
-                  onChange={handleChange}
+                  onChange={handleUsageChange}
                   onBlur={handleBlur}
                   step="0.01"
                   min="0"
@@ -436,10 +518,28 @@ const GenerateInvoicePage = () => {
         <div className="space-y-6">
           <Card>
             <h3 className="text-lg font-semibold mb-4">Invoice Summary</h3>
+            {previewLoading && (
+              <p className="text-sm text-gray-500 mb-3">Calculating usage preview…</p>
+            )}
+            {previewError && !previewLoading && (
+              <Alert
+                type="warning"
+                title="Usage preview unavailable"
+                message={previewError}
+              />
+            )}
             <div className="space-y-3">
               <div className="flex items-center justify-between text-sm">
                 <span className="text-gray-600">Usage Charges</span>
                 <span className="font-semibold">{formatValue(invoicePreview.usageCharges)}</span>
+              </div>
+              <div className="flex items-center justify-between text-sm text-gray-600">
+                <span>Rated CDRs</span>
+                <span className="font-medium">{usagePreview.cdrCount ?? '—'}</span>
+              </div>
+              <div className="flex items-center justify-between text-sm text-gray-600">
+                <span>Rated Duration</span>
+                <span className="font-medium">{formatDuration(usagePreview.totalSeconds)}</span>
               </div>
               <div className="flex items-center justify-between text-sm">
                 <span className="text-gray-600">Line Items</span>

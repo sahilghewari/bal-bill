@@ -2,7 +2,7 @@ const logger = require('./logger');
 
 const requestCounts = {};
 
-setInterval(() => {
+const cleanupInterval = setInterval(() => {
   const oneHourAgo = Date.now() - 60 * 60 * 1000;
 
   Object.keys(requestCounts).forEach((ip) => {
@@ -11,6 +11,10 @@ setInterval(() => {
     }
   });
 }, 60 * 60 * 1000);
+
+if (cleanupInterval.unref) {
+  cleanupInterval.unref();
+}
 
 const createRateLimiter = (maxRequests = 100, windowMs = 60 * 60 * 1000) => {
   return (req, res, next) => {

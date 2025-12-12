@@ -1,8 +1,34 @@
-{"error":"invalid input syntax for type uuid: \"undefined\"","invoice_id":"undefined","level":"error","message":"Failed to fetch invoice","service":"telecom-billing","timestamp":"2025-12-06 19:38:27"}
-{"error":"invalid input syntax for type uuid: \"undefined\"","level":"error","message":"Failed to fetch invoice","service":"telecom-billing","timestamp":"2025-12-06 19:38:27"}
-{"error":"invalid input syntax for type uuid: \"undefined\"","invoice_id":"undefined","level":"error","message":"Failed to fetch invoice","service":"telecom-billing","timestamp":"2025-12-06 19:38:27"}
-{"error":"invalid input syntax for type uuid: \"undefined\"","level":"error","message":"Failed to fetch invoice","service":"telecom-billing","timestamp":"2025-12-06 19:38:27"}
-{"error":"invalid input syntax for type uuid: \"undefined\"","invoice_id":"undefined","level":"error","message":"Failed to fetch invoice","service":"telecom-billing","timestamp":"2025-12-06 19:39:16"}
-{"error":"invalid input syntax for type uuid: \"undefined\"","level":"error","message":"Failed to fetch invoice","service":"telecom-billing","timestamp":"2025-12-06 19:39:16"}
-{"error":"invalid input syntax for type uuid: \"undefined\"","invoice_id":"undefined","level":"error","message":"Failed to fetch invoice","service":"telecom-billing","timestamp":"2025-12-06 19:39:16"}
-{"error":"invalid input syntax for type uuid: \"undefined\"","level":"error","message":"Failed to fetch invoice","service":"telecom-billing","timestamp":"2025-12-06 19:39:16"}
+{"error":"relation \"idx_customers_email\" already exists","level":"error","message":"Test database setup failed","service":"telecom-billing","timestamp":"2025-12-12 07:53:03"}
+{"level":"error","message":"Rate Card Validation Failed: initial_block_seconds must be positive","rate_card":{"connection_fee_flat":0,"initial_block_seconds":-60,"next_block_seconds":60,"price_per_minute":0.004},"service":"telecom-billing","timestamp":"2025-12-12 07:53:04"}
+{"level":"error","message":"Rate Card Validation Failed: initial_block_seconds must be positive","rate_card":{"connection_fee_flat":0,"initial_block_seconds":-60,"next_block_seconds":60,"price_per_minute":0.004},"service":"telecom-billing","timestamp":"2025-12-12 07:53:20"}
+{"error":"relation \"customers\" does not exist","level":"error","message":"Failed to fetch all customers","service":"telecom-billing","timestamp":"2025-12-12 07:53:59"}
+{"error":"relation \"customers\" does not exist","level":"error","message":"Failed to get dashboard overview","service":"telecom-billing","timestamp":"2025-12-12 07:53:59"}
+{"error":"relation \"customers\" does not exist","level":"error","message":"Failed to fetch all customers","service":"telecom-billing","timestamp":"2025-12-12 07:54:00"}
+{"error":"relation \"customers\" does not exist","level":"error","message":"Failed to get dashboard overview","service":"telecom-billing","timestamp":"2025-12-12 07:54:00"}
+{"error":"relation \"customers\" does not exist","level":"error","message":"Failed to fetch all customers","service":"telecom-billing","timestamp":"2025-12-12 08:05:37"}
+{"error":"relation \"customers\" does not exist","level":"error","message":"Failed to fetch customers","service":"telecom-billing","timestamp":"2025-12-12 08:05:37"}
+{"error":"relation \"customers\" does not exist","level":"error","message":"Failed to fetch all customers","service":"telecom-billing","timestamp":"2025-12-12 08:05:38"}
+{"error":"relation \"customers\" does not exist","level":"error","message":"Failed to fetch customers","service":"telecom-billing","timestamp":"2025-12-12 08:05:38"}
+{"error":"relation \"customers\" does not exist","level":"error","message":"Failed to fetch all customers","service":"telecom-billing","timestamp":"2025-12-12 08:07:53"}
+{"error":"relation \"customers\" does not exist","level":"error","message":"Failed to fetch customers","service":"telecom-billing","timestamp":"2025-12-12 08:07:53"}
+{"error":"relation \"customers\" does not exist","level":"error","message":"Failed to fetch all customers","service":"telecom-billing","timestamp":"2025-12-12 08:07:54"}
+{"error":"relation \"customers\" does not exist","level":"error","message":"Failed to fetch customers","service":"telecom-billing","timestamp":"2025-12-12 08:07:54"}
+{"error":"relation \"customers\" does not exist","level":"error","message":"Failed to fetch all customers","service":"telecom-billing","timestamp":"2025-12-12 08:07:56"}
+{"error":"relation \"customers\" does not exist","level":"error","message":"Failed to get dashboard overview","service":"telecom-billing","timestamp":"2025-12-12 08:07:56"}
+{"error":"relation \"customers\" does not exist","level":"error","message":"Failed to fetch all customers","service":"telecom-billing","timestamp":"2025-12-12 08:07:56"}
+{"error":"relation \"customers\" does not exist","level":"error","message":"Failed to get dashboard overview","service":"telecom-billing","timestamp":"2025-12-12 08:07:56"}
+{"error":"connect ECONNREFUSED 127.0.0.1:5432","level":"error","message":"Failed to fetch all customers","service":"telecom-billing","timestamp":"2025-12-12 10:47:32"}
+{"error":"connect ECONNREFUSED 127.0.0.1:5432","level":"error","message":"Failed to get dashboard overview","service":"telecom-billing","timestamp":"2025-12-12 10:47:32"}
+{"error":"connect ECONNREFUSED 127.0.0.1:5432","level":"error","message":"Failed to fetch all customers","service":"telecom-billing","timestamp":"2025-12-12 10:47:32"}
+{"error":"connect ECONNREFUSED 127.0.0.1:5432","level":"error","message":"Failed to get dashboard overview","service":"telecom-billing","timestamp":"2025-12-12 10:47:32"}
+{"level":"error","message":"Rate Card Validation Failed: initial_block_seconds must be positive","rate_card":{"connection_fee_flat":0,"initial_block_seconds":-60,"next_block_seconds":60,"price_per_minute":0.004},"service":"telecom-billing","timestamp":"2025-12-12 10:58:25"}
+{"level":"error","message":"Rate Card Validation Failed: initial_block_seconds must be positive","rate_card":{"connection_fee_flat":0,"initial_block_seconds":-60,"next_block_seconds":60,"price_per_minute":0.004},"service":"telecom-billing","timestamp":"2025-12-12 11:07:53"}
+{"error":"relation \"customers\" does not exist","level":"error","message":"Failed to fetch all customers","service":"telecom-billing","timestamp":"2025-12-12 11:16:36"}
+{"error":"relation \"customers\" does not exist","level":"error","message":"Failed to fetch customers","service":"telecom-billing","timestamp":"2025-12-12 11:16:36"}
+{"error":"relation \"customers\" does not exist","level":"error","message":"Failed to fetch all customers","service":"telecom-billing","timestamp":"2025-12-12 11:16:37"}
+{"error":"relation \"customers\" does not exist","level":"error","message":"Failed to fetch customers","service":"telecom-billing","timestamp":"2025-12-12 11:16:37"}
+{"level":"error","message":"Rate Card Validation Failed: initial_block_seconds must be positive","rate_card":{"connection_fee_flat":0,"initial_block_seconds":-60,"next_block_seconds":60,"price_per_minute":0.004},"service":"telecom-billing","timestamp":"2025-12-12 11:33:53"}
+{"level":"error","message":"Rate Card Validation Failed: initial_block_seconds must be positive","rate_card":{"connection_fee_flat":0,"initial_block_seconds":-60,"next_block_seconds":60,"price_per_minute":0.004},"service":"telecom-billing","timestamp":"2025-12-12 11:40:04"}
+{"level":"error","message":"Rate Card Validation Failed: initial_block_seconds must be positive","rate_card":{"connection_fee_flat":0,"initial_block_seconds":-60,"next_block_seconds":60,"price_per_minute":0.004},"service":"telecom-billing","timestamp":"2025-12-12 11:40:16"}
+{"level":"error","message":"Rate Card Validation Failed: initial_block_seconds must be positive","rate_card":{"connection_fee_flat":0,"initial_block_seconds":-60,"next_block_seconds":60,"price_per_minute":0.004},"service":"telecom-billing","timestamp":"2025-12-12 11:47:48"}
+{"level":"error","message":"Forced shutdown due to timeout","service":"telecom-billing","timestamp":"2025-12-12 13:11:05"}

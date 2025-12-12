@@ -399,6 +399,37 @@ class Invoice {
       throw error;
     }
   }
+
+  static async markCancelledBySystem(referenceDate = new Date()) {
+    const gracePeriodDays = 30;
+    const cutoffDate = new Date(referenceDate.getTime() - gracePeriodDays * 24 * 60 * 60 * 1000);
+
+    const query = `
+      UPDATE invoices
+      SET status = 'cancelled',
+          cancellation_reason = COALESCE(cancellation_reason, 'Auto-cancelled after prolonged overdue status'),
+          status_changed_at = CURRENT_TIMESTAMP,
+          updated_at = CURRENT_TIMESTAMP
+      WHERE status = 'overdue'
+        AND due_date < $1
+        AND COALESCE(amount_paid, 0) < total_amount
+      RETURNING *;
+    `;
+
+    try {
+      const result = await pool.query(query, [cutoffDate]);
+      if (result.rows.length) {
+        logger.warn('Invoices auto-cancelled due to prolonged overdue status', {
+          count: result.rows.length,
+          cutoff_date: cutoffDate,
+        });
+      }
+      return result.rows;
+    } catch (error) {
+      logger.error('Failed to auto-cancel overdue invoices', { error: error.message });
+      throw error;
+    }
+  }
 }
 
 module.exports = Invoice;

@@ -17,8 +17,8 @@ class StripeTransaction {
     const id = uuidv4();
     const query = `
       INSERT INTO stripe_transactions
-      (id, customer_id, invoice_id, stripe_payment_intent_id, amount, currency, status, payment_method)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      (id, customer_id, invoice_id, stripe_payment_intent_id, amount, currency, status, payment_method, stripe_customer_id)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
       RETURNING *;
     `;
 
@@ -32,6 +32,7 @@ class StripeTransaction {
         currency,
         status,
         payment_method,
+        data.stripe_customer_id || null,
       ]);
       logger.info('Stripe transaction created', { transaction_id: id, customer_id, amount });
       return result.rows[0];
@@ -141,18 +142,18 @@ class StripeTransaction {
     }
   }
 
-  static async getFailedForRetry() {
+  static async getFailedForRetry(maxRetryAttempts = 3) {
     const query = `
       SELECT * FROM stripe_transactions
       WHERE status IN ('requires_payment_method', 'processing')
         AND next_retry_at IS NOT NULL
         AND next_retry_at <= CURRENT_TIMESTAMP
-        AND retry_count < 3
+        AND retry_count < $1
       ORDER BY next_retry_at ASC;
     `;
 
     try {
-      const result = await pool.query(query);
+      const result = await pool.query(query, [maxRetryAttempts]);
       return result.rows;
     } catch (error) {
       logger.error('Failed to fetch failed stripe transactions', { error: error.message });

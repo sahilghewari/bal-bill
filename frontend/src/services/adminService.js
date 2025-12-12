@@ -86,6 +86,17 @@ const adminService = {
     }
   },
 
+  getNotificationFeed: async (limit) => {
+    try {
+      const response = await apiClient.get('/admin/notifications/feed', {
+        params: limit ? { limit } : undefined,
+      })
+      return response.data
+    } catch (error) {
+      throw error.response?.data || { error: 'Failed to fetch notifications' }
+    }
+  },
+
   exportReport: async (reportType = 'overview', period = '30') => {
     try {
       const response = await apiClient.get('/admin/reports/export', {

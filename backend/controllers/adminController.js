@@ -4,6 +4,7 @@ const CDR = require('../models/CDR');
 const StripeTransaction = require('../models/StripeTransaction');
 const { pool } = require('../config/database');
 const logger = require('../middleware/logger');
+const notificationFeed = require('../services/notificationFeed');
 
 const MS_IN_DAY = 24 * 60 * 60 * 1000;
 
@@ -681,6 +682,35 @@ exports.getSystemLogs = async (req, res) => {
     logger.error('Failed to get system logs', { error: error.message });
     res.status(500).json({
       error: 'Failed to get system logs',
+      details: error.message,
+    });
+  }
+};
+
+exports.getNotificationFeed = async (req, res) => {
+  try {
+    const limit = req.query.limit ? parseInt(req.query.limit, 10) : undefined;
+
+    if (limit && Number.isNaN(limit)) {
+      return res.status(400).json({
+        error: 'Invalid limit parameter',
+      });
+    }
+
+    const events = notificationFeed.getFeed(limit);
+
+    res.json({
+      success: true,
+      data: events,
+      meta: {
+        count: events.length,
+        max_events: notificationFeed.maxEvents,
+      },
+    });
+  } catch (error) {
+    logger.error('Failed to get notification feed', { error: error.message });
+    res.status(500).json({
+      error: 'Failed to fetch notification feed',
       details: error.message,
     });
   }

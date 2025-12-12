@@ -8,6 +8,7 @@ const StripeTransaction = require('../models/StripeTransaction');
 const stripe = require('../config/stripe');
 const logger = require('../middleware/logger');
 const { pool } = require('../config/database');
+const { defaultService: notificationService } = require('../notifications');
 
 exports.generateDueInvoices = async () => {
   try {
@@ -33,7 +34,7 @@ exports.generateDueInvoices = async () => {
           billing_period_end: billingEnd,
           due_date: dueDate,
           usage_charges: 0,
-          tax_rate: customer.default_tax_rate || 0,
+          tax_rate: typeof customer.default_tax_rate === 'number' ? customer.default_tax_rate : 0,
           discount_amount: 0,
           notes: 'Automated billing cycle invoice',
           auto_publish: true,
@@ -119,9 +120,19 @@ exports.checkLowBalances = async () => {
       if (balance < criticalThreshold) {
         criticalCount += 1;
         logger.warn('Critical balance alert', { customer_id: customer.id, balance });
+        await notificationService.send('customer.balance.critical', {
+          customer_id: customer.id,
+          balance,
+          threshold: criticalThreshold,
+        });
       } else if (balance < lowThreshold) {
         lowCount += 1;
         logger.info('Low balance alert', { customer_id: customer.id, balance });
+        await notificationService.send('customer.balance.low', {
+          customer_id: customer.id,
+          balance,
+          threshold: lowThreshold,
+        });
       }
     }
 
@@ -199,6 +210,12 @@ exports.sendInvoiceReminders = async () => {
             customer_id: customer.id,
             days_until_due: daysUntilDue,
           });
+          await notificationService.send('invoice.reminder', {
+            invoice_id: invoice.id,
+            customer_id: customer.id,
+            due_date: invoice.due_date,
+            days_until_due: daysUntilDue,
+          });
         }
       }
     }
@@ -214,8 +231,79 @@ exports.markOverdueInvoices = async () => {
     logger.info('Starting overdue invoice check');
     const marked = await Invoice.markOverduePastDueDate();
     logger.info('Overdue invoice check complete', { marked: marked.length });
+
+    if (marked.length) {
+      await Promise.allSettled(
+        marked.map(async (invoice) => {
+          try {
+            const customer = await Customer.getById(invoice.customer_id);
+            logger.info('Invoice moved to overdue', {
+              invoice_id: invoice.id,
+              customer_id: invoice.customer_id,
+              customer_email: customer?.email,
+              due_date: invoice.due_date,
+              total_amount: invoice.total_amount,
+            });
+            await notificationService.send('invoice.overdue', {
+              invoice_id: invoice.id,
+              customer_id: invoice.customer_id,
+              customer_email: customer?.email || null,
+              due_date: invoice.due_date,
+              total_amount: invoice.total_amount,
+            });
+          } catch (notifyError) {
+            logger.warn('Failed to enrich overdue notification context', {
+              invoice_id: invoice.id,
+              error: notifyError.message,
+            });
+          }
+        })
+      );
+    }
   } catch (error) {
     logger.error('Failed to mark overdue invoices', { error: error.message });
+  }
+};
+
+exports.autoCancelStaleOverdueInvoices = async () => {
+  try {
+    logger.info('Starting auto-cancel check for stale overdue invoices');
+    const cancelled = await Invoice.markCancelledBySystem();
+
+    if (cancelled.length) {
+      await Promise.allSettled(
+        cancelled.map(async (invoice) => {
+          try {
+            const customer = await Customer.getById(invoice.customer_id);
+            logger.warn('Invoice auto-cancelled after grace period', {
+              invoice_id: invoice.id,
+              customer_id: invoice.customer_id,
+              customer_email: customer?.email,
+              due_date: invoice.due_date,
+              total_amount: invoice.total_amount,
+              cancellation_reason: invoice.cancellation_reason,
+            });
+            await notificationService.send('invoice.cancelled.auto', {
+              invoice_id: invoice.id,
+              customer_id: invoice.customer_id,
+              customer_email: customer?.email || null,
+              due_date: invoice.due_date,
+              total_amount: invoice.total_amount,
+              cancellation_reason: invoice.cancellation_reason,
+            });
+          } catch (notifyError) {
+            logger.warn('Failed to enrich auto-cancel notification context', {
+              invoice_id: invoice.id,
+              error: notifyError.message,
+            });
+          }
+        })
+      );
+    }
+
+    logger.info('Auto-cancel check complete', { cancelled: cancelled.length });
+  } catch (error) {
+    logger.error('Failed to auto-cancel stale overdue invoices', { error: error.message });
   }
 };
 

@@ -16,25 +16,31 @@ const randomPhone = () => {
 
 const randomDuration = () => Math.floor(Math.random() * 570) + 30 // 30s - 10min
 
-const randomStartTime = () => {
+const randomStartTime = (earliestEffectiveDate) => {
   const now = Date.now()
-  const pastWindow = 30 * 24 * 60 * 60 * 1000
-  const timestamp = now - Math.floor(Math.random() * pastWindow)
+  const defaultWindowStart = now - (30 * 24 * 60 * 60 * 1000)
+  const effectiveMs = earliestEffectiveDate ? earliestEffectiveDate.getTime() : defaultWindowStart
+  const windowStart = Math.max(defaultWindowStart, effectiveMs)
+  const timestamp = windowStart + Math.floor(Math.random() * Math.max(1, now - windowStart))
   return new Date(timestamp)
 }
 
-const getRateCardId = async (customerId, serviceType) => {
+const getRateCard = async (customerId, serviceType) => {
   const result = await pool.query(
-    'SELECT id FROM rate_cards WHERE customer_id = $1 AND service_type = $2 ORDER BY effective_date DESC LIMIT 1',
-    [customerId, serviceType]
+    'SELECT id, effective_date FROM rate_cards WHERE customer_id = $1 AND service_type = $2 AND status = $3 ORDER BY effective_date DESC LIMIT 1',
+    [customerId, serviceType, 'active']
   )
-  return result.rows[0]?.id || null
+  return result.rows[0] || null
 }
 
 const seedRandomCdrs = async () => {
+  const targetCount = Number(process.argv[2])
+    || Number(process.env.CDR_SEED_COUNT)
+    || 100
+
   const client = await pool.connect()
   try {
-    console.log('📞 Generating 100 random CDRs...')
+    console.log(`📞 Generating ${targetCount} random CDRs...`)
     const { rows: customers } = await client.query('SELECT id, name FROM customers')
 
     if (!customers.length) {
@@ -44,13 +50,19 @@ const seedRandomCdrs = async () => {
 
     let inserted = 0
 
-    for (let i = 0; i < 100; i += 1) {
+    for (let i = 0; i < targetCount; i += 1) {
       const customer = randomChoice(customers)
       const serviceType = randomChoice(SERVICE_TYPES)
-      const startTime = randomStartTime()
+      const rateCard = await getRateCard(customer.id, serviceType)
+
+      if (!rateCard) {
+        continue
+      }
+
+      const effectiveDate = new Date(rateCard.effective_date)
+      const startTime = randomStartTime(effectiveDate)
       const duration = randomDuration()
       const endTime = new Date(startTime.getTime() + duration * 1000)
-      const rateCardId = await getRateCardId(customer.id, serviceType)
 
       const query = `
         INSERT INTO cdrs
@@ -69,7 +81,7 @@ const seedRandomCdrs = async () => {
         endTime,
         duration,
         serviceType,
-        rateCardId,
+        rateCard.id,
         'pending',
       ])
 

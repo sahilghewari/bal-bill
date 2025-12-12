@@ -23,6 +23,8 @@ CREATE TABLE customers (
   current_balance DECIMAL(15, 4) DEFAULT 0.00,
   status VARCHAR(20) DEFAULT 'active',
   billing_day INTEGER CHECK (billing_day BETWEEN 1 AND 28) DEFAULT 1,
+  stripe_customer_id VARCHAR(255),
+  stripe_default_payment_method VARCHAR(255),
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -40,6 +42,7 @@ CREATE TABLE rate_cards (
   price_per_minute DECIMAL(10, 6) NOT NULL,
   connection_fee_flat DECIMAL(10, 4) DEFAULT 0.00,
   effective_date DATE NOT NULL,
+  currency VARCHAR(3) NOT NULL DEFAULT 'USD',
   status VARCHAR(20) DEFAULT 'active',
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
   updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -136,6 +139,7 @@ CREATE TABLE stripe_transactions (
   customer_id UUID NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
   invoice_id UUID REFERENCES invoices(id),
   stripe_payment_intent_id VARCHAR(255) UNIQUE,
+  stripe_customer_id VARCHAR(255),
   amount DECIMAL(15, 4) NOT NULL,
   currency VARCHAR(3) NOT NULL,
   status VARCHAR(50) NOT NULL,

@@ -59,6 +59,12 @@ const seedDemoData = async () => {
     }
 
     console.log('\n📋 Creating rate cards...');
+    const pastEffectiveDate = (() => {
+      const date = new Date();
+      date.setDate(date.getDate() - 60);
+      return date.toISOString().split('T')[0];
+    })();
+
     const rateCards = [
       {
         customerId: customerIds[0],
@@ -67,7 +73,8 @@ const seedDemoData = async () => {
         next_block_seconds: 60,
         price_per_minute: 0.004,
         connection_fee_flat: 0,
-        effective_date: '2025-12-01',
+        effective_date: pastEffectiveDate,
+        currency: customers[0].currency,
       },
       {
         customerId: customerIds[0],
@@ -76,7 +83,8 @@ const seedDemoData = async () => {
         next_block_seconds: 30,
         price_per_minute: 0.005,
         connection_fee_flat: 0.01,
-        effective_date: '2025-12-01',
+        effective_date: pastEffectiveDate,
+        currency: customers[0].currency,
       },
       {
         customerId: customerIds[1],
@@ -85,7 +93,8 @@ const seedDemoData = async () => {
         next_block_seconds: 6,
         price_per_minute: 0.0045,
         connection_fee_flat: 0.05,
-        effective_date: '2025-12-01',
+        effective_date: pastEffectiveDate,
+        currency: customers[1].currency,
       },
       {
         customerId: customerIds[1],
@@ -94,7 +103,8 @@ const seedDemoData = async () => {
         next_block_seconds: 15,
         price_per_minute: 0.006,
         connection_fee_flat: 0.02,
-        effective_date: '2025-12-01',
+        effective_date: pastEffectiveDate,
+        currency: customers[1].currency,
       },
       {
         customerId: customerIds[2],
@@ -103,7 +113,8 @@ const seedDemoData = async () => {
         next_block_seconds: 60,
         price_per_minute: 0.0035,
         connection_fee_flat: 0,
-        effective_date: '2025-12-01',
+        effective_date: pastEffectiveDate,
+        currency: customers[2].currency,
       },
     ];
 
@@ -112,8 +123,8 @@ const seedDemoData = async () => {
       const query = `
         INSERT INTO rate_cards
         (id, customer_id, service_type, initial_block_seconds, next_block_seconds,
-         price_per_minute, connection_fee_flat, effective_date, status)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         price_per_minute, connection_fee_flat, effective_date, currency, status)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         RETURNING id;
       `;
       await pool.query(query, [
@@ -125,6 +136,7 @@ const seedDemoData = async () => {
         rateCard.price_per_minute,
         rateCard.connection_fee_flat,
         rateCard.effective_date,
+        rateCard.currency,
         'active',
       ]);
       const customerIndex = customerIds.indexOf(rateCard.customerId);

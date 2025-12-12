@@ -18,5 +18,6 @@ router.get('/reports/export', adminController.exportReport);
 // System
 router.get('/system/health', adminController.getSystemHealth);
 router.get('/system/logs', adminController.getSystemLogs);
+router.get('/notifications/feed', adminController.getNotificationFeed);
 
 module.exports = router;

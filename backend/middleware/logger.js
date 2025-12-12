@@ -1,6 +1,8 @@
 const winston = require('winston');
 require('dotenv').config();
 
+const subscribers = new Set();
+
 const logger = winston.createLogger({
   level: process.env.LOG_LEVEL || 'info',
   format: winston.format.combine(
@@ -32,5 +34,49 @@ const logger = winston.createLogger({
     }),
   ],
 });
+
+const originalLog = logger.log.bind(logger);
+logger.log = (info, ...metaArgs) => {
+  let entry = info;
+
+  if (typeof info === 'string') {
+    const [meta = {}] = metaArgs;
+    entry = {
+      level: typeof meta.level === 'string' ? meta.level : logger.level || 'info',
+      message: info,
+      ...meta,
+    };
+  }
+
+  const meta = { ...entry };
+  delete meta.level;
+  delete meta.message;
+
+  const payload = {
+    level: entry.level,
+    message: entry.message,
+    meta,
+    timestamp: meta.timestamp || new Date().toISOString(),
+  };
+
+  subscribers.forEach((subscriber) => {
+    try {
+      subscriber(payload);
+    } catch (error) {
+      // Avoid recursive logging
+    }
+  });
+
+  return originalLog(entry);
+};
+
+logger.subscribe = (handler) => {
+  subscribers.add(handler);
+  return () => subscribers.delete(handler);
+};
+
+logger.unsubscribe = (handler) => {
+  subscribers.delete(handler);
+};
 
 module.exports = logger;

@@ -19,5 +19,6 @@ router.get('/:customer_id/dashboard', billingController.getBillingDashboard);
 router.get('/overview/all', billingController.getBillingOverview);
 router.get('/overdue/invoices', billingController.getOverdueInvoices);
 router.get('/analytics/revenue', billingController.getRevenueAnalytics);
+router.get('/:customer_id/preview', billingController.getInvoicePreview);
 
 module.exports = router;
